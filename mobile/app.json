@@ -1,0 +1,78 @@
+{
+  "expo": {
+    "name": "my-wardrobe",
+    "slug": "my-wardrobe-app",
+    "version": "1.0.1",
+    "sdkVersion": "54.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "owner": "itays3",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mywardrobe.app",
+      "newArchEnabled": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "We need camera access to scan your wardrobe items",
+        "NSPhotoLibraryUsageDescription": "We need photo library access to save and select wardrobe photos",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.mywardrobe.app",
+      "newArchEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow my-wardrobe to access your camera to scan clothing items"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow my-wardrobe to access your photos"
+        }
+      ]
+    ],
+    "scheme": "mywardrobe",
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "c8a2f00b-4f37-48ef-b835-453dde3c200f"
+      }
+    },
+    "runtimeVersion": "exposdk:54.0.0",
+    "updates": {
+      "url": "https://u.expo.dev/c8a2f00b-4f37-48ef-b835-453dde3c200f"
+    }
+  }
+}

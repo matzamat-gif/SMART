@@ -51,7 +51,6 @@ export default function ShareOutfitScreen() {
         ]
       );
     } catch (error: any) {
-      console.error('Post creation failed:', error);
       const message = error.response?.data?.error || t('social.failedToCreatePost');
       Alert.alert(t('common.error'), message);
     } finally {

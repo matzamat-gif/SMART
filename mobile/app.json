@@ -59,6 +59,14 @@
         {
           "photosPermission": "Allow my-wardrobe to access your photos"
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#059669",
+          "defaultChannel": "default"
+        }
       ]
     ],
     "scheme": "mywardrobe",
@@ -68,7 +76,8 @@
       },
       "eas": {
         "projectId": "c8a2f00b-4f37-48ef-b835-453dde3c200f"
-      }
+      },
+      "apiUrl": "https://wardrobe-backend-e5uidowr6a-ew.a.run.app/api"
     },
     "runtimeVersion": "exposdk:54.0.0",
     "updates": {

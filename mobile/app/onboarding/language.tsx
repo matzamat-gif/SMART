@@ -7,6 +7,8 @@ import { contextAPI } from '../../lib/api';
 import { useI18n } from '../../lib/i18n/I18nContext';
 import { AnimatedCard } from '../../components/AnimatedCard';
 import { haptics } from '../../lib/haptics';
+import { setPendingPreferences } from '../../lib/onboarding';
+import { logger } from '../../lib/logger';
 
 export default function LanguageScreen() {
   const { language, setLanguage, t } = useI18n();
@@ -21,14 +23,16 @@ export default function LanguageScreen() {
   const handleContinue = async () => {
     try {
       await haptics.medium();
-      // Only call API if user is authenticated (might be doing this from settings later)
+      // DEV-007: stash locally so it survives until registration.
+      await setPendingPreferences({ primary_language: selected });
+
       const token = await AsyncStorage.getItem('authToken');
       if (token) {
         await contextAPI.updateProfile({ primary_language: selected });
       }
       router.push('/onboarding/location');
     } catch (error) {
-      console.error('Failed to update language:', error);
+      logger.debug('Language preference deferred to post-register');
       router.push('/onboarding/location');
     }
   };

@@ -6,6 +6,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { contextAPI } from '../../lib/api';
 import { useI18n } from '@/lib/i18n';
 import { haptics } from '@/lib/haptics';
+import { setPendingPreferences } from '@/lib/onboarding';
+import { logger } from '@/lib/logger';
 
 const COMMON_BRANDS = [
   'Nike', 'Adidas', 'Zara', 'H&M', 'Uniqlo', 
@@ -61,20 +63,34 @@ export default function PreferencesScreen() {
   const handleContinue = async () => {
     setLoading(true);
     try {
-      // Save preferences to backend if user is logged in
-      // Otherwise, skip (will be saved after registration)
+      const preferredBrandsJson = JSON.stringify(selectedBrands);
+      const preferredColorsJson = JSON.stringify(selectedColors);
+
+      // DEV-007: Always persist locally first so the data survives the
+      // registration step. If the user is somehow already authenticated
+      // (e.g. they backed into onboarding), also push to the server now.
+      await setPendingPreferences({
+        preferred_brands: preferredBrandsJson,
+        preferred_colors: preferredColorsJson,
+      });
+
       const token = await AsyncStorage.getItem('authToken');
       if (token) {
-        await contextAPI.updateProfile({
-          preferred_brands: JSON.stringify(selectedBrands),
-          preferred_colors: JSON.stringify(selectedColors),
-        });
+        try {
+          await contextAPI.updateProfile({
+            preferred_brands: preferredBrandsJson,
+            preferred_colors: preferredColorsJson,
+          });
+        } catch (apiErr) {
+          // Server-side save can be retried by register.tsx flow.
+          logger.debug('Server preferences sync deferred to post-register');
+        }
       }
 
       await haptics.success();
       router.replace('/auth/register');
     } catch (error) {
-      console.error('Failed to save preferences:', error);
+      logger.error('Failed to stash preferences');
       // Non-critical - continue anyway
       router.replace('/auth/register');
     } finally {

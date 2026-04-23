@@ -190,7 +190,7 @@ export default function ScanScreen() {
         <TouchableOpacity
           style={styles.addButton}
           onPress={() => {
-            router.push('/add-item');
+            router.push('/scan-session');
           }}
         >
           <Ionicons name="camera" size={24} color="#fff" />

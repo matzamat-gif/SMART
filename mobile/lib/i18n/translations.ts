@@ -550,6 +550,26 @@ export const translations = {
       failedToLoad: 'Failed to load insights. Please try again.',
     },
     
+    scanSession: {
+      title: 'Scan your wardrobe',
+      stripEmpty: 'Point at an item and shoot. The next tap saves and reopens the camera.',
+      stripEmptyCategory: 'Let\'s add {{category}}. Point and shoot.',
+      counter: '{{total}} items · {{summary}}',
+      import: 'Import',
+      shoot: 'Take photo',
+      firstOutfitReady: 'Your first outfit is ready',
+    },
+
+    bulkImport: {
+      progress: 'Processing {{done}} of {{total}}...',
+      swipeHint: 'Swipe right to confirm, left to discard',
+      empty: 'No photos selected.',
+      allDone: 'All done. {{saved}} items saved.',
+      confirm: 'Confirm',
+      discard: 'Discard',
+      edit: 'Edit',
+    },
+
     scan: {
       title: 'Add Item',
       takePhoto: 'Take Photo',
@@ -1119,6 +1139,26 @@ export const translations = {
       themeInfo: 'ערכת הנושא של המערכת מתחלפת אוטומטית בהתאם להגדרות המכשיר שלך.',
     },
     
+    scanSession: {
+      title: 'סרוק את הארון',
+      stripEmpty: 'כוון על פריט וצלם. השמירה הבאה תפתח שוב את המצלמה.',
+      stripEmptyCategory: 'בוא נוסיף {{category}}. כוון וצלם.',
+      counter: '{{total}} פריטים · {{summary}}',
+      import: 'ייבא',
+      shoot: 'צלם',
+      firstOutfitReady: 'התלבושת הראשונה שלך מוכנה',
+    },
+
+    bulkImport: {
+      progress: 'מעבד {{done}} מתוך {{total}}...',
+      swipeHint: 'החלק ימינה לאישור, שמאלה למחיקה',
+      empty: 'לא נבחרו תמונות.',
+      allDone: 'סיימנו. {{saved}} פריטים נשמרו.',
+      confirm: 'אשר',
+      discard: 'מחק',
+      edit: 'ערוך',
+    },
+
     scan: {
       title: 'הוסף פריט',
       takePhoto: 'צלם תמונה',

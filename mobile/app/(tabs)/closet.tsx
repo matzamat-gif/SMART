@@ -317,7 +317,7 @@ export default function ClosetScreen() {
         <Text style={styles.title}>{t('closet.title') || 'My Closet'}</Text>
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => router.push('/add-item')}
+          onPress={() => router.push('/scan-session')}
         >
           <Ionicons name="add" size={24} color="#fff" />
         </TouchableOpacity>
@@ -395,7 +395,7 @@ export default function ClosetScreen() {
           </Text>
           <TouchableOpacity
             style={styles.emptyButton}
-            onPress={() => router.push('/add-item')}
+            onPress={() => router.push('/scan-session')}
           >
             <Text style={styles.emptyButtonText}>{t('closet.addItem') || 'Add Item'}</Text>
           </TouchableOpacity>

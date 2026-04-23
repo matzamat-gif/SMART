@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { I18nProvider } from '../lib/i18n/I18nContext';
 import { ThemeProvider } from '../lib/ThemeContext';
 import { AuthProvider } from '../lib/AuthContext';
+import { ScanSessionProvider } from '../context/ScanSessionContext';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { configureNotificationHandler } from '../lib/notifications';
 import { logger } from '../lib/logger';
@@ -35,8 +36,10 @@ export default function RootLayout() {
       <ThemeProvider>
         <I18nProvider>
           <AuthProvider>
-            <StatusBar style="auto" />
-            <Stack screenOptions={{ headerShown: false }} />
+            <ScanSessionProvider>
+              <StatusBar style="auto" />
+              <Stack screenOptions={{ headerShown: false }} />
+            </ScanSessionProvider>
           </AuthProvider>
         </I18nProvider>
       </ThemeProvider>

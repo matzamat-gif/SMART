@@ -19,15 +19,22 @@ import { theme } from '@/lib/theme';
 import { useI18n } from '@/lib/i18n/I18nContext';
 import { haptics } from '@/lib/haptics';
 import Avatar from '@/components/social/Avatar';
+import { useCurrentUserId } from '@/lib/AuthContext';
+import { logger } from '@/lib/logger';
 
 export default function ProfileScreen() {
   const { username } = useLocalSearchParams();
   const { t } = useI18n();
+  const currentUserId = useCurrentUserId();
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<SocialProfile | null>(null);
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [isFollowing, setIsFollowing] = useState(false);
   const [loadingFollow, setLoadingFollow] = useState(false);
+
+  // True when this profile belongs to the signed-in user — the follow
+  // button doesn't make sense in that case.
+  const isOwnProfile = currentUserId != null && profile?.user_id === currentUserId;
 
   useEffect(() => {
     loadProfile();
@@ -36,15 +43,34 @@ export default function ProfileScreen() {
   const loadProfile = async () => {
     try {
       const profileResponse = await socialFeedAPI.getProfile(username as string);
-      setProfile(profileResponse.data);
+      const profileData = profileResponse.data as SocialProfile;
+      setProfile(profileData);
+
+      // DEV-008: Seed the follow button from whatever the server tells us.
+      // If the response doesn't include `is_following`, fall back to a
+      // dedicated status endpoint so we don't render "Follow" when the
+      // current user is already following.
+      if (typeof profileData.is_following === 'boolean') {
+        setIsFollowing(profileData.is_following);
+      } else if (currentUserId != null && profileData.user_id !== currentUserId) {
+        try {
+          const statusRes = await socialFeedAPI.getFollowStatus(profileData.user_id);
+          setIsFollowing(!!statusRes.data?.is_following);
+        } catch {
+          // Endpoint may not exist yet — leave default and let the user
+          // toggle. The unfollow call will succeed even if the initial
+          // state was wrong.
+          setIsFollowing(false);
+        }
+      }
 
       const postsResponse = await socialFeedAPI.getUserPosts({
-        userId: profileResponse.data.user_id,
+        userId: profileData.user_id,
         limit: 20,
       });
       setPosts(postsResponse.data.posts || []);
     } catch (error: any) {
-      console.error('Failed to load profile:', error);
+      logger.error('Failed to load profile', { status: error.response?.status });
       if (error.response?.status === 403) {
         Alert.alert(t('common.error'), t('social.profilePrivate'));
       } else {
@@ -165,7 +191,8 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {/* Follow Button */}
+          {/* Follow Button — hidden on own profile (DEV-008). */}
+          {!isOwnProfile && (
           <TouchableOpacity
             style={styles.followButton}
             onPress={handleFollow}
@@ -202,6 +229,7 @@ export default function ProfileScreen() {
               )}
             </LinearGradient>
           </TouchableOpacity>
+          )}
         </View>
 
         {/* Posts Grid */}

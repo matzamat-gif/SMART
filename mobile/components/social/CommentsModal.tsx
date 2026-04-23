@@ -20,6 +20,8 @@ import { useI18n } from '../../lib/i18n/I18nContext';
 import { FeedComment } from '../../lib/types';
 import { socialFeedAPI } from '../../lib/api';
 import { haptics } from '../../lib/haptics';
+import { useCurrentUserId } from '../../lib/AuthContext';
+import { logger } from '../../lib/logger';
 
 interface CommentsModalProps {
   visible: boolean;
@@ -32,6 +34,7 @@ interface CommentsModalProps {
 export default function CommentsModal({ visible, postId, onClose, onCommentAdded, onCommentDeleted }: CommentsModalProps) {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
+  const currentUserId = useCurrentUserId();
   
   const [comments, setComments] = useState<FeedComment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,7 +74,7 @@ export default function CommentsModal({ visible, postId, onClose, onCommentAdded
       setCursor(response.data.nextCursor);
       setHasMore(!!response.data.nextCursor);
     } catch (error) {
-      console.error('Failed to load comments:', error);
+      logger.error('Failed to load comments');
       if (refresh) Alert.alert(t('common.error'), t('social.failedToLoadComments'));
     } finally {
       setLoading(false);
@@ -99,7 +102,7 @@ export default function CommentsModal({ visible, postId, onClose, onCommentAdded
       
       // Keep keyboard open for rapid-fire comments
     } catch (error) {
-      console.error('Failed to post comment:', error);
+      logger.error('Failed to post comment');
       Alert.alert(t('common.error'), t('social.failedToPostComment'));
       await haptics.error();
     } finally {
@@ -131,35 +134,44 @@ export default function CommentsModal({ visible, postId, onClose, onCommentAdded
     );
   };
 
-  const renderComment = ({ item }: { item: FeedComment }) => (
-    <View style={styles.commentContainer} key={`comment-${item.id}`}>
-      <Image
-        source={{ uri: item.profile_photo_url || 'https://via.placeholder.com/40' }}
-        style={styles.avatar}
-      />
-      <View style={styles.commentContent}>
-        <View style={styles.commentHeader}>
-          <Text style={styles.username}>
-            {item.display_name || item.username || 'User'}
-            {item.username && <Text style={styles.usernameHandle}> @{item.username}</Text>}
-          </Text>
-          <Text style={styles.timeAgo}>
-            {new Date(item.created_at).toLocaleDateString()}
-          </Text>
+  const renderComment = ({ item }: { item: FeedComment }) => {
+    // DEV-004: Only show the delete affordance for comments the current
+    // user actually owns. The backend still enforces ownership, but
+    // hiding the button avoids the misleading "any user can delete"
+    // affordance the original code shipped.
+    const isOwner = currentUserId != null && item.user_id === currentUserId;
+    return (
+      <View style={styles.commentContainer} key={`comment-${item.id}`}>
+        <Image
+          source={{ uri: item.profile_photo_url || 'https://via.placeholder.com/40' }}
+          style={styles.avatar}
+        />
+        <View style={styles.commentContent}>
+          <View style={styles.commentHeader}>
+            <Text style={styles.username}>
+              {item.display_name || item.username || 'User'}
+              {item.username && <Text style={styles.usernameHandle}> @{item.username}</Text>}
+            </Text>
+            <Text style={styles.timeAgo}>
+              {new Date(item.created_at).toLocaleDateString()}
+            </Text>
+          </View>
+          <Text style={styles.commentText}>{item.content}</Text>
         </View>
-        <Text style={styles.commentText}>{item.content}</Text>
+
+        {isOwner && (
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={() => handleDelete(item)}
+            hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+            accessibilityLabel={t('common.delete')}
+          >
+            <Ionicons name="ellipsis-horizontal" size={16} color={theme.colors.text.tertiary} />
+          </TouchableOpacity>
+        )}
       </View>
-      
-      {/* Assuming current user can delete their own comments - would need real user context to hide properly */}
-      <TouchableOpacity 
-        style={styles.deleteButton} 
-        onPress={() => handleDelete(item)}
-        hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
-      >
-        <Ionicons name="ellipsis-horizontal" size={16} color={theme.colors.text.tertiary} />
-      </TouchableOpacity>
-    </View>
-  );
+    );
+  };
 
   return (
     <Modal

@@ -12,13 +12,15 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authAPI } from '@/lib/api';
 import { theme } from '@/lib/theme';
 import { useI18n } from '@/lib/i18n';
+import { logger } from '@/lib/logger';
+import { useAuth } from '@/lib/AuthContext';
 
 export default function Login() {
   const { t } = useI18n();
+  const { signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -34,35 +36,16 @@ export default function Login() {
 
     setLoading(true);
     try {
-      console.log('Attempting login to:', authAPI.login.toString());
-      console.log('Sending credentials for:', trimmedEmail);
-      
       const response = await authAPI.login({ email: trimmedEmail, password: trimmedPassword });
-      
-      console.log('Login successful');
       const { token, user } = response.data;
 
-      await AsyncStorage.setItem('authToken', token);
-      await AsyncStorage.setItem('user', JSON.stringify(user));
-      
-      // Verify token was saved
-      const savedToken = await AsyncStorage.getItem('authToken');
-      console.log('✅ Token saved to AsyncStorage:', {
-        tokenLength: token.length,
-        savedTokenLength: savedToken?.length,
-        match: savedToken === token,
-        timestamp: new Date().toISOString(),
-      });
-
+      await signIn(token, user);
       router.replace('/(tabs)');
     } catch (error: any) {
-      console.error('Login caught error:', error);
-      console.error('Login error message:', error.message);
-      console.error('Login error response data:', error.response?.data);
-      console.error('Login error status:', error.response?.status);
-      
+      logger.error('Login failed', { status: error.response?.status });
+
       const errorMsg = error.response?.data?.error || error.message || t('auth.loginFailed');
-      Alert.alert(t('common.error'), `Failed: ${errorMsg}\n\nCode: ${error.code || 'None'}`);
+      Alert.alert(t('common.error'), errorMsg);
     } finally {
       setLoading(false);
     }

@@ -5,9 +5,17 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { I18nProvider } from '../lib/i18n/I18nContext';
 import { ThemeProvider } from '../lib/ThemeContext';
+import { AuthProvider } from '../lib/AuthContext';
+import { ScanSessionProvider } from '../context/ScanSessionContext';
+import { ErrorBoundary } from '../components/ErrorBoundary';
+import { configureNotificationHandler } from '../lib/notifications';
+import { logger } from '../lib/logger';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
+
+// Configure foreground notification behaviour once at module load.
+configureNotificationHandler();
 
 export default function RootLayout() {
   useEffect(() => {
@@ -16,19 +24,25 @@ export default function RootLayout() {
       try {
         await SplashScreen.hideAsync();
       } catch (e) {
-        console.warn('Failed to hide splash screen:', e);
+        logger.warn('Failed to hide splash screen');
       }
     }, 1000);
-    
+
     return () => clearTimeout(timer);
   }, []);
 
   return (
-    <ThemeProvider>
-      <I18nProvider>
-        <StatusBar style="auto" />
-        <Stack screenOptions={{ headerShown: false }} />
-      </I18nProvider>
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <I18nProvider>
+          <AuthProvider>
+            <ScanSessionProvider>
+              <StatusBar style="auto" />
+              <Stack screenOptions={{ headerShown: false }} />
+            </ScanSessionProvider>
+          </AuthProvider>
+        </I18nProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }

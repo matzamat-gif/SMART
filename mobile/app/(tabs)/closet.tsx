@@ -7,7 +7,6 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
-  Image,
   Alert,
   RefreshControl,
 } from 'react-native';
@@ -16,6 +15,9 @@ import { wardrobeAPI, contextAPI } from '../../lib/api';
 import { router, useFocusEffect } from 'expo-router';
 import { useI18n } from '@/lib/i18n';
 import { haptics } from '@/lib/haptics';
+import CachedImage from '@/components/CachedImage';
+import WardrobeCompletenessCard from '@/components/WardrobeCompletenessCard';
+import { logger } from '@/lib/logger';
 
 interface WardrobeItem {
   id: number;
@@ -44,55 +46,103 @@ const getCategoryIcon = (key: string) => {
   return icons[key] || 'grid-outline';
 };
 
+// DEV-017: page items in chunks instead of loading the full closet at once.
+const PAGE_SIZE = 30;
+
 export default function ClosetScreen() {
   const { t, isRTL } = useI18n();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [items, setItems] = useState<WardrobeItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [sortBy, setSortBy] = useState<'created_at' | 'last_worn_date' | 'times_worn'>('created_at');
+  const [hasMore, setHasMore] = useState(true);
+  const [offset, setOffset] = useState(0);
+  // Total wardrobe size — drives the completeness card. We compute it
+  // independently so it doesn't shrink when the user filters by category.
+  const [totalCount, setTotalCount] = useState<number | null>(null);
+  const [allCategoriesSnapshot, setAllCategoriesSnapshot] = useState<{ category?: string }[]>([]);
 
   useEffect(() => {
-    loadItems();
+    // Reset and reload whenever filters change.
+    loadItems({ reset: true });
   }, [selectedCategory, sortBy]);
 
   // Reload items when screen gains focus (e.g., after adding new item)
   useFocusEffect(
     useCallback(() => {
-      loadItems();
+      loadItems({ reset: true });
+      // Refresh the completeness snapshot too.
+      refreshCompletenessSnapshot();
     }, [selectedCategory, sortBy])
   );
 
-  const loadItems = async () => {
+  const refreshCompletenessSnapshot = async () => {
     try {
-      setLoading(true);
+      const res = await wardrobeAPI.getItems({
+        sort_by: 'created_at',
+        order: 'DESC',
+        limit: 200,
+      });
+      const all = Array.isArray(res.data) ? res.data : res.data?.items || [];
+      setAllCategoriesSnapshot(all);
+      setTotalCount(all.length);
+    } catch {
+      // non-fatal
+    }
+  };
+
+  const loadItems = async ({ reset = false }: { reset?: boolean } = {}) => {
+    try {
+      if (reset) setLoading(true);
+      else setLoadingMore(true);
+
+      const nextOffset = reset ? 0 : offset;
       const params: any = {
         sort_by: sortBy,
         order: 'DESC',
+        limit: PAGE_SIZE,
+        offset: nextOffset,
       };
-
       if (selectedCategory !== 'all') {
         params.category = selectedCategory;
       }
 
       const response = await wardrobeAPI.getItems(params);
-      console.log('Wardrobe items response:', JSON.stringify(response.data).substring(0, 200));
-      
-      // Handle both {items: []} and direct array [] responses
-      const newItems = Array.isArray(response.data) ? response.data : (response.data?.items || []);
-      setItems(newItems);
-    } catch (error) {
-      console.error('Failed to load items:', error);
+
+      const page = Array.isArray(response.data)
+        ? response.data
+        : response.data?.items || [];
+
+      setHasMore(page.length === PAGE_SIZE);
+      setOffset(nextOffset + page.length);
+      setItems((prev) => (reset ? page : [...prev, ...page]));
+
+      if (reset && selectedCategory === 'all') {
+        // Use the first page snapshot as a reasonable proxy when the
+        // dedicated snapshot fetch hasn't returned yet.
+        setAllCategoriesSnapshot((current) => (current.length === 0 ? page : current));
+      }
+    } catch (err) {
+      logger.error('Failed to load wardrobe items');
       Alert.alert(t('common.error'), t('closet.failedToLoad'));
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
+  };
+
+  const handleEndReached = () => {
+    if (!hasMore || loading || loadingMore || refreshing) return;
+    loadItems({ reset: false });
   };
 
   const handleRefresh = () => {
     setRefreshing(true);
-    loadItems();
+    loadItems({ reset: true });
+    refreshCompletenessSnapshot();
   };
 
   const handleToggleFavorite = async (itemId: number) => {
@@ -107,7 +157,7 @@ export default function ClosetScreen() {
       );
       haptics.selection();
     } catch (error) {
-      console.error('Failed to toggle favorite:', error);
+      logger.error('Failed to toggle favorite');
       Alert.alert(t('common.error'), t('closet.failedToUpdateFavorite') || 'Failed to update favorite status');
     }
   };
@@ -135,7 +185,7 @@ export default function ClosetScreen() {
           : t('closet.unlockedMessage')
       );
     } catch (error) {
-      console.error('Failed to toggle lock:', error);
+      logger.error('Failed to toggle lock');
       Alert.alert(t('common.error'), t('closet.failedToUpdateLock'));
     }
   };
@@ -155,7 +205,7 @@ export default function ClosetScreen() {
               setItems(prevItems => prevItems.filter(item => item.id !== itemId));
               Alert.alert(t('closet.delete'), t('closet.deleted'));
             } catch (error) {
-              console.error('Failed to delete item:', error);
+              logger.error('Failed to delete item');
               Alert.alert(t('common.error'), t('closet.failedToDelete'));
             }
           },
@@ -188,7 +238,7 @@ export default function ClosetScreen() {
         }
       >
         {item.image_url ? (
-          <Image source={{ uri: item.image_url }} style={styles.itemImage} />
+          <CachedImage source={{ uri: item.image_url }} style={styles.itemImage} />
         ) : (
           <View style={[styles.itemImage, { justifyContent: 'center', alignItems: 'center' }]}>
             <Ionicons name="shirt-outline" size={32} color="#9CA3AF" />
@@ -267,7 +317,7 @@ export default function ClosetScreen() {
         <Text style={styles.title}>{t('closet.title') || 'My Closet'}</Text>
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => router.push('/add-item')}
+          onPress={() => router.push('/scan-session')}
         >
           <Ionicons name="add" size={24} color="#fff" />
         </TouchableOpacity>
@@ -345,7 +395,7 @@ export default function ClosetScreen() {
           </Text>
           <TouchableOpacity
             style={styles.emptyButton}
-            onPress={() => router.push('/add-item')}
+            onPress={() => router.push('/scan-session')}
           >
             <Text style={styles.emptyButtonText}>{t('closet.addItem') || 'Add Item'}</Text>
           </TouchableOpacity>
@@ -362,7 +412,35 @@ export default function ClosetScreen() {
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
           }
-          ListFooterComponent={<View style={{ height: 40 }} />}
+          // DEV-017: paginate. Window is small enough that we still feel
+          // snappy, but we no longer fetch every item up-front.
+          onEndReached={handleEndReached}
+          onEndReachedThreshold={0.5}
+          // Render perf knobs — important once the closet grows past a
+          // few hundred items.
+          initialNumToRender={PAGE_SIZE}
+          maxToRenderPerBatch={PAGE_SIZE}
+          windowSize={5}
+          removeClippedSubviews
+          ListHeaderComponent={
+            selectedCategory === 'all' && allCategoriesSnapshot.length > 0 ? (
+              <WardrobeCompletenessCard
+                items={allCategoriesSnapshot}
+                hideWhenComplete
+              />
+            ) : null
+          }
+          ListFooterComponent={
+            <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+              {loadingMore ? (
+                <ActivityIndicator size="small" color="#059669" />
+              ) : !hasMore && items.length >= PAGE_SIZE ? (
+                <Text style={{ color: '#9CA3AF', fontSize: 12 }}>
+                  {t('closet.endOfList') || `That's everything (${items.length})`}
+                </Text>
+              ) : null}
+            </View>
+          }
         />
       )}
     </View>

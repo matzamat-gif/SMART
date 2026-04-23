@@ -13,12 +13,19 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { haptics } from '../../lib/haptics';
-import { contextAPI, dailyAPI } from '../../lib/api';
+import { contextAPI, dailyAPI, wardrobeAPI } from '../../lib/api';
 import Toast from '../../components/Toast';
 import ConfettiAnimation from '../../components/ConfettiAnimation';
 import { OutfitCardSkeleton } from '../../components/SkeletonLoader';
+import WardrobeCompletenessCard from '../../components/WardrobeCompletenessCard';
 import { useToast } from '../../hooks/useToast';
 import { useI18n } from '@/lib/i18n';
+import {
+  computeCompletenessScore,
+  isReadyForFirstOutfit,
+  FIRST_OUTFIT_ITEM_THRESHOLD,
+} from '../../lib/onboarding';
+import { logger } from '../../lib/logger';
 
 interface OutfitItem {
   id: number;
@@ -69,6 +76,11 @@ export default function TodayScreen() {
   const [selectedEvent, setSelectedEvent] = useState<number | null>(null);
   const [destinationCity, setDestinationCity] = useState<string>('');
   const [showConfetti, setShowConfetti] = useState(false);
+  // Strategy 1 + 8 from the market analysis: short-circuit outfit generation
+  // until the wardrobe has enough items. We track the user's items so we
+  // can both decide *whether* to call generate, and render a completeness
+  // card showing exactly what's missing.
+  const [wardrobeItems, setWardrobeItems] = useState<{ category?: string }[]>([]);
   const { toast, hideToast, success, error, info } = useToast();
   const isMounted = React.useRef(true);
 
@@ -93,20 +105,34 @@ export default function TodayScreen() {
   const loadInitialData = async () => {
     try {
       setLoading(true);
-      
-      // Load moods and event types
-      const [moodsRes, eventsRes] = await Promise.all([
+
+      // Load moods, event types, and a quick wardrobe snapshot so we can
+      // gate outfit generation on wardrobe completeness (Strategy 1).
+      const [moodsRes, eventsRes, itemsRes] = await Promise.all([
         contextAPI.getMoods(),
         contextAPI.getEventTypes(),
+        wardrobeAPI
+          .getItems({ sort_by: 'created_at', order: 'DESC', limit: 200 })
+          .catch(() => ({ data: { items: [] } })),
       ]);
 
       setMoods(moodsRes.data.moods || []);
       setEventTypes(eventsRes.data.event_types || []);
 
-      // Generate daily outfits
-      await generateOutfits();
+      const fetchedItems = Array.isArray(itemsRes.data)
+        ? itemsRes.data
+        : itemsRes.data?.items || [];
+      setWardrobeItems(fetchedItems);
+
+      // Only ask the backend for outfits once the wardrobe has enough
+      // breadth — otherwise we'd burn quota and likely show a poor result.
+      if (isReadyForFirstOutfit(fetchedItems)) {
+        await generateOutfits();
+      } else {
+        setOutfits([]);
+      }
     } catch (err) {
-      console.error('Failed to load initial data:', err);
+      logger.error('Failed to load today screen data');
       error(t('today.failedToLoad'));
     } finally {
       setLoading(false);
@@ -126,7 +152,7 @@ export default function TodayScreen() {
       setWeather(response.data.weather);
       setSelectedOutfitIndex(0);
     } catch (err: any) {
-      console.error('Failed to generate outfits:', err);
+      logger.error('Failed to generate outfits');
       const message = err.response?.data?.error || t('today.failedToGenerate');
       error(message);
     }
@@ -150,7 +176,7 @@ export default function TodayScreen() {
         }
       }, 2000);
     } catch (err) {
-      console.error('Failed to approve outfit:', err);
+      logger.error('Failed to approve outfit');
       error(t('today.failedToApprove'));
     }
   };
@@ -193,7 +219,7 @@ export default function TodayScreen() {
       await haptics.light();
       info(t('today.regeneratedSuccess'));
     } catch (err) {
-      console.error('Failed to regenerate:', err);
+      logger.error('Failed to regenerate outfit');
       error(t('today.failedToGenerate'));
     }
   };
@@ -230,20 +256,37 @@ export default function TodayScreen() {
   }
 
   if (outfits.length === 0) {
+    const needsMoreItems = !isReadyForFirstOutfit(wardrobeItems);
     return (
-      <View style={styles.emptyContainer}>
-        <Ionicons name="shirt-outline" size={64} color="#9CA3AF" />
-        <Text style={styles.emptyTitle}>{t('today.noOutfits')}</Text>
-        <Text style={styles.emptyText}>
-          {t('today.addMoreItems')}
-        </Text>
-        <TouchableOpacity 
-          style={styles.addButton}
-          onPress={() => router.push('/add-item')}
-        >
-          <Text style={styles.addButtonText}>{t('today.addItemButton')}</Text>
-        </TouchableOpacity>
-      </View>
+      <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 32 }}>
+        <View style={styles.header}>
+          <Text style={styles.title}>{t('today.title')}</Text>
+        </View>
+        {needsMoreItems ? (
+          <>
+            {/* Strategy 1 + 8: progressive disclosure of wardrobe gap. */}
+            <WardrobeCompletenessCard items={wardrobeItems} />
+            <View style={styles.inlineEmpty}>
+              <Ionicons name="sparkles-outline" size={36} color="#9CA3AF" />
+              <Text style={styles.emptyText}>
+                {`Add at least ${FIRST_OUTFIT_ITEM_THRESHOLD} items across a few categories and we'll start suggesting outfits.`}
+              </Text>
+            </View>
+          </>
+        ) : (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="shirt-outline" size={64} color="#9CA3AF" />
+            <Text style={styles.emptyTitle}>{t('today.noOutfits')}</Text>
+            <Text style={styles.emptyText}>{t('today.addMoreItems')}</Text>
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={() => router.push('/add-item')}
+            >
+              <Text style={styles.addButtonText}>{t('today.addItemButton')}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </ScrollView>
     );
   }
 
@@ -472,6 +515,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 32,
+  },
+  inlineEmpty: {
+    alignItems: 'center',
+    padding: 24,
+    marginHorizontal: 16,
   },
   emptyTitle: {
     fontSize: 24,

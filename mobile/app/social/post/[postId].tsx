@@ -20,6 +20,8 @@ import { haptics } from '@/lib/haptics';
 import { timeAgo } from '@/lib/timeAgo';
 import Avatar from '@/components/social/Avatar';
 import CommentsModal from '@/components/social/CommentsModal';
+import { sharePost } from '@/lib/sharing';
+import { logger } from '@/lib/logger';
 
 export default function PostDetailScreen() {
   const { postId } = useLocalSearchParams();
@@ -69,6 +71,20 @@ export default function PostDetailScreen() {
       // Revert on error
       setPost(prev => prev ? { ...prev, liked: post.liked, likes_count: post.likes_count } : null);
       Alert.alert(t('common.error'), t('social.failedToLike'));
+    }
+  };
+
+  const handleShare = async () => {
+    if (!post) return;
+    try {
+      await haptics.medium();
+      await sharePost({
+        postId: post.id,
+        caption: post.caption,
+        authorName: post.display_name || post.username,
+      });
+    } catch (err) {
+      logger.debug('Share dismissed');
     }
   };
 
@@ -229,6 +245,13 @@ export default function PostDetailScreen() {
             <View style={styles.actionInner}>
               <Ionicons name="chatbubble-outline" size={22} color={theme.colors.text.secondary} />
               <Text style={styles.actionText}>{post.comments_count || 0}</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Share — Bet 2: every shared outfit is an acquisition surface. */}
+          <TouchableOpacity style={styles.actionBtn} onPress={handleShare} activeOpacity={0.7}>
+            <View style={styles.actionInner}>
+              <Ionicons name="share-social-outline" size={22} color={theme.colors.text.secondary} />
             </View>
           </TouchableOpacity>
 

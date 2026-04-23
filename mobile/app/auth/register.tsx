@@ -14,12 +14,21 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { authAPI } from '@/lib/api';
+import { authAPI, contextAPI } from '@/lib/api';
 import { theme } from '@/lib/theme';
 import { useI18n } from '@/lib/i18n';
+import { useAuth } from '@/lib/AuthContext';
+import { logger } from '@/lib/logger';
+import {
+  registerForPushNotificationsAsync,
+  syncPushTokenWithBackend,
+  scheduleMorningOutfitReminder,
+} from '@/lib/notifications';
+import { PENDING_PREFERENCES_KEY } from '@/lib/onboarding';
 
 export default function Register() {
   const { t } = useI18n();
+  const { signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
@@ -66,12 +75,41 @@ export default function Register() {
       });
       const { token, user } = response.data;
 
-      await AsyncStorage.setItem('authToken', token);
-      await AsyncStorage.setItem('user', JSON.stringify(user));
+      // Store credentials via AuthContext so axios picks them up.
+      await signIn(token, user);
+
+      // DEV-007: Replay any preferences the user picked during onboarding
+      // before they had an auth token. Best-effort — never block registration.
+      try {
+        const pendingRaw = await AsyncStorage.getItem(PENDING_PREFERENCES_KEY);
+        if (pendingRaw) {
+          const pending = JSON.parse(pendingRaw);
+          await contextAPI.updateProfile({
+            ...(pending.preferred_brands ? { preferred_brands: pending.preferred_brands } : {}),
+            ...(pending.preferred_colors ? { preferred_colors: pending.preferred_colors } : {}),
+            ...(pending.city ? { city: pending.city } : {}),
+            ...(pending.primary_language ? { primary_language: pending.primary_language } : {}),
+          });
+          await AsyncStorage.removeItem(PENDING_PREFERENCES_KEY);
+        }
+      } catch (prefErr) {
+        logger.debug('Could not replay onboarding preferences');
+      }
+
+      // Push notifications: ask permission and register the token. Both
+      // calls are no-ops if expo-notifications isn't available.
+      try {
+        await registerForPushNotificationsAsync();
+        await syncPushTokenWithBackend();
+        await scheduleMorningOutfitReminder(7, 0);
+      } catch {
+        // non-blocking
+      }
 
       // Redirect to main app after successful registration
       router.replace('/(tabs)');
     } catch (error: any) {
+      logger.error('Registration failed', { status: error.response?.status });
       Alert.alert(t('common.error'), error.response?.data?.error || t('auth.registrationFailed'));
     } finally {
       setLoading(false);

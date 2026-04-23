@@ -6,6 +6,8 @@ import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { contextAPI } from '../../lib/api';
 import { useI18n } from '../../lib/i18n/I18nContext';
+import { setPendingPreferences } from '../../lib/onboarding';
+import { logger } from '../../lib/logger';
 
 export default function LocationScreen() {
   const { t } = useI18n();
@@ -32,23 +34,21 @@ export default function LocationScreen() {
         const detectedCity = geocode[0].city || geocode[0].region || '';
         setCity(detectedCity);
         setLocationMode('gps');
-        
-        // Save to API in background if authenticated
+
+        // DEV-007: persist locally so it survives until registration.
+        await setPendingPreferences({ city: detectedCity });
+
         const token = await AsyncStorage.getItem('authToken');
         if (token) {
-          contextAPI.updateProfile({
-            city: detectedCity,
-            location_mode: 'gps',
-          }).catch(err => {
-            console.warn('Failed to save GPS city to backend:', err.message);
-          });
+          contextAPI
+            .updateProfile({ city: detectedCity, location_mode: 'gps' })
+            .catch(() => logger.debug('GPS city sync deferred'));
         }
-        
-        // Navigate immediately - don't wait for API
+
         router.push('/onboarding/preferences');
       }
     } catch (error) {
-      console.error('GPS error:', error);
+      logger.error('GPS lookup failed');
       Alert.alert(t('common.error'), t('onboarding.locationError') || 'Failed to get location');
     } finally {
       setLoading(false);
@@ -63,6 +63,9 @@ export default function LocationScreen() {
 
     try {
       setLoading(true);
+      // DEV-007: stash locally first so registration can replay it.
+      await setPendingPreferences({ city: city.trim() });
+
       const token = await AsyncStorage.getItem('authToken');
       if (token) {
         await contextAPI.updateProfile({
@@ -72,7 +75,7 @@ export default function LocationScreen() {
       }
       router.push('/onboarding/preferences');
     } catch (error) {
-      console.error('Failed to save city:', error);
+      logger.error('Failed to save city');
       Alert.alert(
         t('common.error'),
         t('onboarding.failedToSaveCity') || 'Failed to save city',

@@ -82,6 +82,9 @@ export interface SocialProfile {
   posts_count: number;
   created_at: string;
   updated_at: string;
+  // Optional — set by the backend when the request is authenticated.
+  // When present, callers should trust this over a separate status fetch.
+  is_following?: boolean;
 }
 
 export interface FeedPost {

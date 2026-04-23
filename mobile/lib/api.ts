@@ -187,6 +187,17 @@ export const wardrobeAPI = {
     api.delete(`/wardrobe/${id}`),
   logWear: (id: number, data: { worn_date?: string; weather?: string; occasion?: string; notes?: string }) =>
     api.post(`/wardrobe/${id}/wear`, data),
+  // FLAG: backend endpoint /wardrobe/bulk-tag is not yet implemented.
+  // Client falls back to per-image analyzeImage calls when a 404 is
+  // returned. Once the endpoint exists it should accept a multipart
+  // body with fields image_0, image_1, ... and return
+  // { results: [{ index, suggestions, background_removed_url? }, ...] }.
+  bulkTag: async (formData: FormData) => {
+    return api.post('/wardrobe/bulk-tag', formData, {
+      headers: { Accept: 'application/json' },
+      transformRequest: (data) => data,
+    });
+  },
 };
 
 export const outfitAPI = {

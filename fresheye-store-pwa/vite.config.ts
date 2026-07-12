@@ -1,25 +1,26 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-// FreshEye store-layer PWA — offline-first shell.
+// Noy HaSade / FreshEye — field inventory PWA.
 export default defineConfig({
   plugins: [
     react(),
+    tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
       workbox: {
-        // App shell is cached so the app loads with no network.
         globPatterns: ['**/*.{js,css,html,woff2}'],
       },
       manifest: {
-        name: 'FreshEye — סריקת מלאי',
-        short_name: 'FreshEye',
+        name: 'נוי השדה — ניהול מלאי בשטח',
+        short_name: 'נוי השדה',
         dir: 'rtl',
         lang: 'he',
         start_url: '/',
         display: 'standalone',
-        background_color: '#F5F0E8',
+        background_color: '#F5F5F4',
         theme_color: '#1E3E20',
         icons: [
           // TODO: add real 192/512 PNG icons before pilot install.

@@ -1,39 +1,60 @@
-# FreshEye — Store-Layer PWA (CV-independent scaffold)
+# נוי השדה — Field Inventory PWA
 
-Runnable foundation for the store-layer app (Stage 2). Everything CV-dependent is stubbed
-behind a clean seam, so this builds and runs **without a validated model**. Drop it into
-Claude Code to continue the build once the Stage 1 CV gate is green.
+Full rebuild matching the product characterization (`אפיון מפתח - Noy HaSade`):
+role-based navigation, live-camera scanning, department-grouped inventory with a
+store/warehouse split, a management dashboard, and a catalog admin screen — all in
+RTL Hebrew with the Noy HaSade brand design system.
 
 ## Run
+
 ```bash
 npm install
-npm run dev      # http://localhost:5173  — full 4-step loop, demo mode
-npm run build    # tsc strict + vite build + PWA service worker  (verified passing)
+npm run dev      # http://localhost:5173 — demo mode, full app works with no backend
+npm run build    # tsc strict + vite build + PWA service worker (verified passing)
 ```
 
-## What's built (CV-independent)
-- Vite + React 18 + TypeScript + vite-plugin-pwa (offline app shell, manifest, RTL, Heebo, brand tokens)
-- The full 4-step loop: **camera → review/confirm → gap vs quota → submit**
-- Pure rules engine (`src/lib/rules.ts`) — weight + gap + shortage status, mirrors the backend
-- Confirmation gate — nothing advances until every item has a confirmed count
-- Offline-first plumbing: IndexedDB stores (catalog, quotas, scans, outbox, images) in `src/lib/db.ts`
-- Online default / conscious offline opt-in with a **temporary-estimate** heuristic (`src/lib/heuristic.ts`)
-- Client-generated scan UUID (idempotency), outbox enqueue, image kept for cloud re-analysis
-- Connectivity awareness (`src/lib/connectivity.ts`)
+Login: pick one of the three seed users on the login screen. Each role sees a
+different tab set and home screen:
 
-## What's stubbed / pending (CV-dependent — do NOT wire until Stage 1 is green)
-- `src/lib/api.ts` → `detect()` returns fake detections behind `src/lib/cv-contract.ts`.
-  Replace with real `POST /api/scans` once Roboflow + thresholds are validated. Screens don't change.
-- `reconcile()` calls `POST /api/scans/reconcile` — **this endpoint must be added to the backend**
-  (see Stage 2 spec §10). Auto-verify within 15% → submit; conflict → needs_review.
+- **מוכרן (clerk)** — בית · סריקה · מלאי — scoped to one branch.
+- **מנהל סניף (branch manager)** — בית · סריקה · מלאי · ניהול — scoped to one branch.
+- **הנהלה (executive)** — בית · מלאי · ניהול · קטלוג — all 12 branches, no scan tab.
+
+## What's built
+
+- **Login** — 3 seed users, role icons; production would use org SSO instead.
+- **Home** — scan-first for clerk/manager (coverage %, session counter, low-stock
+  list with depletion-rate ETA); branch-chip overview + urgency-sorted branch list
+  for exec.
+- **Scan** — branch + store/warehouse location picker → live camera
+  (`getUserMedia`, falls back to a file picker if camera access is denied) →
+  analyzing animation → **quick-confirm** path (single product, high confidence,
+  already in catalog) or **full-review** path (multiple products / low confidence /
+  new product) → save. Supports stacking multiple photos of the same stand, with an
+  honestly-measured confidence-trend message (up/down/unchanged/duplicate-image) —
+  never a fake "confidence improved" label.
+- **Inventory** — grouped by department, collapsible, dual-tone store+warehouse
+  progress bar, staleness tag, waste ("פחת") reporting per item.
+- **Dashboard** — department rollups, urgency-sorted reorder list with a WhatsApp
+  share button, computed inter-branch transfer suggestions, recent activity log.
+- **Catalog** (exec only) — uncertainty-threshold slider, per-product editing
+  (unit weight / box weight for bulk / par / reorder point / freshness threshold /
+  department), department + subcategory management with an "unassigned" bucket.
+- Brand design system as CSS tokens (`src/lib/brand.ts`), Assistant font, full RTL.
+
+## What's stubbed — do not wire until Stage 1 CV gate is green
+
+- `src/lib/vision.ts` → `analyzePhoto()` returns mock detections behind a documented
+  seam. The Anthropic Vision call **must** be proxied through a backend (never
+  called directly from the client — that requires exposing an API key). Swapping
+  the mock body for a real `fetch('/api/scan')` is the only change needed; no
+  screen depends on this seam directly.
 - Real PWA icons (192/512 PNG) before pilot install.
-- Porting the full Design-handoff visuals on top of this skeleton.
 
-## Config
-- `VITE_API_BASE` (default `/api`) — backend base URL
-- `VITE_DEMO` (default `true`) — simulates a successful submit so the loop completes with no
-  backend. Set `false` when wiring the real API.
+## Deliberately deferred (documented, not silently missing)
 
-## Seam to respect
-All CV lives behind `cv-contract.ts` and the `detect()` stub. Keeping that seam is what makes
-this scaffold safe to build now: swap the stub for the real model later, nothing else moves.
+- Persistent backend / auth — everything is in-memory per session (matches
+  milestones M1–M4 in the spec; a real backend + SSO is M5).
+- Offline queue + background sync banner.
+- Low-confidence approval queue as a separate manager workflow.
+- Duplicate-scan-within-30-minutes warning.

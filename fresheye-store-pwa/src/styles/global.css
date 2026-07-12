@@ -1,13 +1,42 @@
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
-body {
-  font-family: var(--font);
-  background: #d9d3c6;
-  color: var(--ink);
-  -webkit-font-smoothing: antialiased;
+@import "tailwindcss";
+
+@keyframes dotPulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.15); }
 }
-button { font-family: inherit; cursor: pointer; }
-:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
-@media (prefers-reduced-motion: reduce) {
-  * { animation: none !important; transition: none !important; }
+@keyframes aurora {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+@keyframes scanSweep {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(280px); }
+  100% { transform: translateY(0); }
+}
+@keyframes scanGlow {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+@keyframes floatUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Assistant', system-ui, sans-serif;
+  background: #E7E5E1;
+  -webkit-tap-highlight-color: transparent;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+input, select, button {
+  font-family: inherit;
 }

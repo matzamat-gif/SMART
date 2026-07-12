@@ -1,131 +1,141 @@
-import { useEffect, useState } from 'react';
-import { DeviceFrame } from './components/DeviceFrame';
-import { Header } from './components/Chrome';
-import { CameraScreen } from './screens/CameraScreen';
-import { ReviewScreen } from './screens/ReviewScreen';
-import { GapScreen } from './screens/GapScreen';
-import { SubmitScreen } from './screens/SubmitScreen';
-import { isOnline, onConnectivityChange } from './lib/connectivity';
-import { getCatalog, saveCatalog, getQuotas, saveQuotas, saveScan, saveImage, enqueue } from './lib/db';
-import { SEED_CATALOG, SEED_QUOTAS } from './lib/seed';
-import { detect } from './lib/api';
-import { submitScan } from './lib/api';
-import { buildDraft, correctItem, allConfirmed } from './state/scanMachine';
-import type { ProduceItemConfig, LocalScan } from './types/domain';
-import { heuristicUnits } from './lib/heuristic';
+import { useState } from 'react';
+import { BarChart3, Camera, Leaf, LogOut, Package, Settings2 } from 'lucide-react';
+import type { Catalog, DeptId, Inventory, LogEntry, Place, ScanItem, Subcat, User } from './types';
+import { BRANCHES, ROLE_LABELS, SEED_CATALOG, SEED_SUBCATS, seedInventory } from './data/seed';
+import { C } from './lib/brand';
+import { Login } from './components/Login';
+import { Home } from './components/Home';
+import { Scan } from './components/Scan';
+import { InventoryScreen } from './components/Inventory';
+import { Dashboard } from './components/Dashboard';
+import { Catalog as CatalogScreen } from './components/Catalog';
 
-// Demo mode simulates a successful submit so the loop completes without a backend.
-// Set VITE_DEMO=false once the real API is wired.
-const DEMO = (import.meta.env.VITE_DEMO ?? 'true') !== 'false';
-
-const STORE_ID = 'store-pilot-1';
-const CHAIN_ID = 'chain-noy-hasade';
-
-type Step = 'camera' | 'review' | 'gap' | 'submit';
+type View = 'home' | 'scan' | 'inventory' | 'dashboard' | 'catalog';
+type HistoryKey = string; // `${branchId}::${product}::${place}`
+interface HistoryPoint { kg: number; at: number; }
 
 export default function App() {
-  const [online, setOnline] = useState(isOnline());
-  const [offlineOptIn, setOfflineOptIn] = useState(false);
-  const [catalog, setCatalog] = useState<ProduceItemConfig[]>([]);
-  const [quotas, setQuotas] = useState<Map<string, number>>(new Map());
-  const [step, setStep] = useState<Step>('camera');
-  const [scan, setScan] = useState<LocalScan | null>(null);
-  const [done, setDone] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [catalog, setCatalog] = useState<Catalog>(SEED_CATALOG);
+  const [subcats, setSubcats] = useState<Subcat[]>(SEED_SUBCATS);
+  const [inventory, setInventory] = useState<Inventory>(seedInventory);
+  const [history, setHistory] = useState<Record<HistoryKey, HistoryPoint>>({});
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const [view, setView] = useState<View>('home');
+  const [session, setSession] = useState(0);
+  const [threshold, setThreshold] = useState(75);
 
-  useEffect(() => onConnectivityChange(setOnline), []);
+  const branch = (id: string) => BRANCHES.find((b) => b.id === id)!;
+  const deptOf = (product: string): DeptId | null => {
+    const sc = subcats.find((s) => s.id === catalog[product]?.cat);
+    return sc ? sc.dept : null;
+  };
 
-  // Load catalog/quotas from IndexedDB; seed on first run.
-  useEffect(() => {
-    (async () => {
-      let cat = await getCatalog();
-      if (cat.length === 0) { await saveCatalog(SEED_CATALOG); await saveQuotas(SEED_QUOTAS); cat = SEED_CATALOG; }
-      setCatalog(cat);
-      setQuotas(await getQuotas());
-    })();
-  }, []);
-
-  async function handleCapture(image: Blob) {
-    const useOnline = online;
-    const classes = catalog.map((c) => c.roboflow_class);
-
-    let detections;
-    let source: 'cloud' | 'heuristic';
-    if (useOnline) {
-      detections = (await detect(image, classes)).detections; // STUB until Stage 1 gate
-      source = 'cloud';
-    } else {
-      // Offline: coarse heuristic per item (frameFill defaulted mid; manager corrects next).
-      detections = catalog.slice(0, 3).map((c) => ({
-        class: c.roboflow_class,
-        count: heuristicUnits({ item: c, frameFill: 0.5, fullStandUnits: 80 }),
-        confidence: 0.4,
-      }));
-      source = 'heuristic';
-    }
-
-    const draft = buildDraft({
-      store_id: STORE_ID, chain_id: CHAIN_ID, scan_type: 'morning',
-      estimate_source: source, detections, catalog, quotas, image_ids: ['img-1'],
+  function commitScan(branchId: string, place: Place, items: ScanItem[], byName: string) {
+    const t = Date.now();
+    setInventory((prev) => {
+      const next = { ...prev, [branchId]: { ...(prev[branchId] || {}) } };
+      items.forEach((it) => {
+        const existing = next[branchId][it.product] || { kg: 0, at: null, by: null, conf: null, backKg: 0, backAt: null, backBy: null };
+        if (place === 'store') {
+          next[branchId][it.product] = { ...existing, kg: it.weightKg, at: t, by: byName, conf: it.confidence };
+        } else {
+          next[branchId][it.product] = { ...existing, backKg: it.weightKg, backAt: t, backBy: byName };
+        }
+      });
+      return next;
     });
-    await saveImage('img-1', draft.scan_id, image); // full image kept for cloud re-analysis
-    await saveScan(draft);
-    setScan(draft);
-    setStep('review');
-  }
-
-  function handleCorrect(itemId: string, units: number) {
-    setScan((s) => (s ? correctItem(s, itemId, units, catalog) : s));
-  }
-
-  function handleConfirmAll() {
-    setScan((s) => {
-      if (!s) return s;
-      // Any untouched item is confirmed at its detected count (explicit approval).
-      const confirmed = { ...s, items: s.items.map((it) => ({
-        ...it, confirmed_units: it.confirmed_units ?? it.detected_units,
-      })) };
-      saveScan(confirmed);
-      return confirmed;
+    setHistory((prev) => {
+      const next = { ...prev };
+      items.forEach((it) => {
+        const existing = inventory[branchId]?.[it.product];
+        const prevTotal = existing ? existing.kg + existing.backKg : 0;
+        const prevAt = place === 'store' ? existing?.at : existing?.backAt;
+        if (existing && prevAt) next[`${branchId}::${it.product}`] = { kg: prevTotal, at: prevAt };
+      });
+      return next;
     });
-    setStep('gap');
+    setCatalog((prev) => {
+      const next = { ...prev };
+      items.forEach((it) => {
+        if (!next[it.product]) {
+          next[it.product] = { unitG: it.bulk ? 0 : Math.max(1, Math.round(it.unitG || 0)), boxKg: it.bulk ? Math.max(1, Math.round(it.weightKg)) : 0, par: 15, reorder: 4, bulk: !!it.bulk, cat: null, freshH: 24, calib: 0 };
+        } else if (!it.isNew) {
+          next[it.product] = { ...next[it.product], calib: next[it.product].calib + 1 };
+        }
+      });
+      return next;
+    });
+    const entry: LogEntry = { id: `${t}_${Math.random()}`, branchId, by: byName, when: t, kind: 'scan', items: items.map((i) => ({ product: i.product, kg: i.weightKg, place })) };
+    setLog((prev) => [entry, ...prev].slice(0, 60));
+    setSession((s) => s + 1);
   }
 
-  async function handleSubmit() {
-    if (!scan) return;
-    if (online) {
-      try {
-        if (!DEMO) await submitScan(scan.scan_id, STORE_ID);
-        const submitted = { ...scan, status: 'submitted' as const };
-        await saveScan(submitted); setScan(submitted);
-      } catch {
-        await enqueue(scan.scan_id);
-        const queued = { ...scan, status: 'queued' as const };
-        await saveScan(queued); setScan(queued);
-      }
-    } else {
-      await enqueue(scan.scan_id); // outbox → background sync re-analyzes on reconnect
-      const queued = { ...scan, status: 'queued' as const };
-      await saveScan(queued); setScan(queued);
-    }
-    setDone(true);
+  function reportWaste(branchId: string, product: string, place: Place, amountKg: number) {
+    const t = Date.now();
+    setInventory((prev) => {
+      const existing = prev[branchId]?.[product];
+      if (!existing) return prev;
+      const next = { ...prev, [branchId]: { ...prev[branchId] } };
+      if (place === 'store') next[branchId][product] = { ...existing, kg: Math.max(0, existing.kg - amountKg) };
+      else next[branchId][product] = { ...existing, backKg: Math.max(0, existing.backKg - amountKg) };
+      return next;
+    });
+    const entry: LogEntry = { id: `${t}_${Math.random()}`, branchId, by: user!.name, when: t, kind: 'waste', items: [{ product, kg: amountKg, place }] };
+    setLog((prev) => [entry, ...prev].slice(0, 60));
   }
+
+  if (!user) return <Login onLogin={(u) => { setUser(u); setView('home'); setSession(0); }} />;
+
+  const tabs: { id: View; label: string; icon: typeof Leaf }[] = [{ id: 'home', label: 'בית', icon: Leaf }];
+  if (user.role !== 'exec') tabs.push({ id: 'scan', label: 'סריקה', icon: Camera });
+  tabs.push({ id: 'inventory', label: 'מלאי', icon: Package });
+  if (user.role !== 'clerk') tabs.push({ id: 'dashboard', label: 'ניהול', icon: BarChart3 });
+  if (user.role === 'exec') tabs.push({ id: 'catalog', label: 'קטלוג', icon: Settings2 });
 
   return (
-    <DeviceFrame>
-      <Header online={online} />
-      {step === 'camera' && (
-        <CameraScreen online={online} offlineOptIn={offlineOptIn}
-          onOfflineOptIn={() => setOfflineOptIn(true)} onCapture={handleCapture} />
-      )}
-      {step === 'review' && scan && (
-        <ReviewScreen scan={scan} catalog={catalog} onCorrect={handleCorrect}
-          onConfirmAll={handleConfirmAll} canAdvance={allConfirmed({ ...scan,
-            items: scan.items.map((it) => ({ ...it, confirmed_units: it.confirmed_units ?? it.detected_units })) })} />
-      )}
-      {step === 'gap' && scan && <GapScreen scan={scan} onContinue={() => setStep('submit')} />}
-      {step === 'submit' && scan && (
-        <SubmitScreen scan={scan} online={online} done={done} onSubmit={handleSubmit} />
-      )}
-    </DeviceFrame>
+    <div dir="rtl" className="min-h-screen flex justify-center" style={{ background: C.cream, color: C.green }}>
+      <div className="w-full max-w-md min-h-screen flex flex-col relative shadow-xl" style={{ background: C.cream }}>
+        <header className="px-5 pt-5 pb-4 sticky top-0 z-20" style={{ background: C.green }}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="rounded-xl p-1.5 flex items-center justify-center" style={{ background: C.yellow }}><Leaf className="w-5 h-5" style={{ color: C.green }} /></div>
+              <div className="text-white">
+                <h1 className="font-extrabold text-lg leading-none tracking-tight">נוי השדה</h1>
+                <p className="text-xs mt-0.5" style={{ color: C.leaf }}>ניהול מלאי בשטח</p>
+              </div>
+            </div>
+            <button onClick={() => setUser(null)} className="flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 text-white active:scale-95 transition" style={{ background: 'rgba(255,255,255,0.12)' }}>
+              <LogOut className="w-3.5 h-3.5" /> יציאה
+            </button>
+          </div>
+          <div className="mt-3 flex items-center gap-2 text-xs text-white">
+            <span className="rounded-full px-2.5 py-1 font-semibold" style={{ background: C.yellow, color: C.green }}>{ROLE_LABELS[user.role]}</span>
+            <span className="opacity-90">{user.name}</span>
+            {user.branch && <span className="opacity-70">· {branch(user.branch).short}</span>}
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-y-auto pb-24 relative">
+          {view === 'home' && <Home user={user} branch={branch} catalog={catalog} inventory={inventory} deptOf={deptOf} history={history} session={session} go={setView} />}
+          {view === 'scan' && <Scan user={user} catalog={catalog} onCommit={commitScan} session={session} backHome={() => setView('home')} />}
+          {view === 'inventory' && <InventoryScreen user={user} catalog={catalog} inventory={inventory} deptOf={deptOf} onWaste={reportWaste} />}
+          {view === 'dashboard' && <Dashboard user={user} branch={branch} catalog={catalog} inventory={inventory} deptOf={deptOf} log={log} />}
+          {view === 'catalog' && <CatalogScreen catalog={catalog} setCatalog={setCatalog} subcats={subcats} setSubcats={setSubcats} threshold={threshold} setThreshold={setThreshold} />}
+        </main>
+
+        <nav className="absolute bottom-0 inset-x-0 bg-white px-2 py-2 flex justify-around z-20" style={{ borderTop: `1px solid ${C.line}` }}>
+          {tabs.map((t) => {
+            const Icon = t.icon;
+            const active = view === t.id;
+            return (
+              <button key={t.id} onClick={() => setView(t.id)} className="flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition" style={{ color: active ? C.green : '#A8A29E' }}>
+                <Icon className="w-5 h-5" strokeWidth={active ? 2.4 : 1.8} /><span className="text-[11px] font-semibold">{t.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+    </div>
   );
 }

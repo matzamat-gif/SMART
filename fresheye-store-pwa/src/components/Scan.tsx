@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  AlertTriangle, Camera, Check, CheckCircle2, ImagePlus, Info, Loader2, ScanLine,
-  TrendingDown, TrendingUp, X, Zap,
+  AlertTriangle, Camera, Check, CheckCircle2, FlaskConical, ImagePlus, Info, KeyRound,
+  Loader2, ScanLine, TrendingDown, TrendingUp, X, Zap,
 } from 'lucide-react';
 import type { Catalog, Place, ScanItem, User } from '../types';
 import { BRANCHES } from '../data/seed';
 import { C } from '../lib/brand';
 import { kg, nowStr } from '../lib/format';
-import { analyzePhoto, matchCatalogName, type CapturedImage } from '../lib/vision';
+import { analyzePhoto, getApiKey, hasApiKey, matchCatalogName, setApiKey, type CapturedImage } from '../lib/vision';
 import { NumField } from './ui';
 
 const CONFIDENCE_THRESHOLD = 0.75;
@@ -180,6 +180,10 @@ export function Scan({ user, catalog, onCommit, session, backHome }: {
   const [items, setItems] = useState<ScanItem[]>([]);
   const [err, setErr] = useState('');
   const [confMsg, setConfMsg] = useState<ConfMsg>(null);
+  const [isDemo, setIsDemo] = useState(false);
+  const [showKeySheet, setShowKeySheet] = useState(false);
+  const [keyDraft, setKeyDraft] = useState('');
+  const [keyConfigured, setKeyConfigured] = useState(() => hasApiKey());
   const presetRef = useRef(Math.floor(Math.random() * 6));
   const prevConfRef = useRef<number | null>(null);
   const catalogNames = Object.keys(catalog);
@@ -188,7 +192,8 @@ export function Scan({ user, catalog, onCommit, session, backHome }: {
     setStage('analyzing');
     setErr('');
     try {
-      const raw = await analyzePhoto(list, presetRef.current);
+      const { items: raw, demo } = await analyzePhoto(list, catalog, presetRef.current);
+      setIsDemo(demo);
       const rows: ScanItem[] = raw.map((it) => {
         const matched = matchCatalogName(it.product, catalogNames);
         const bulk = it.count == null || it.count === 0;
@@ -205,7 +210,11 @@ export function Scan({ user, catalog, onCommit, session, backHome }: {
         };
       }).filter((r) => r.product);
 
-      if (!rows.length) { setErr('לא זוהו מוצרים. נסה זווית או תאורה אחרת.'); setStage('error'); return; }
+      if (!rows.length) {
+        setErr('לא זוהו פירות או ירקות בתמונה. ודא שהדוכן ממלא את הפריים ונסה שוב.');
+        setStage('error');
+        return;
+      }
 
       const avg = rows.reduce((s, r) => s + r.confidence, 0) / rows.length;
       if (list.length > 1) {
@@ -247,12 +256,30 @@ export function Scan({ user, catalog, onCommit, session, backHome }: {
   }
   if (stage === 'analyzing') return <AnalyzeOverlay imgUrl={lastUrl} />;
 
+  function saveKey() {
+    setApiKey(keyDraft);
+    setKeyConfigured(hasApiKey());
+    setShowKeySheet(false);
+  }
+
   return (
     <div className="p-5 space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2"><Camera className="w-5 h-5" style={{ color: C.green }} /><h2 className="text-lg font-extrabold" style={{ color: C.green }}>סריקת דוכן</h2></div>
-        {session > 0 && <span className="text-xs rounded-full px-2.5 py-1 font-bold" style={{ background: C.greenSoft, color: C.green }}>נסרקו {session}</span>}
+        <div className="flex items-center gap-2">
+          {session > 0 && <span className="text-xs rounded-full px-2.5 py-1 font-bold" style={{ background: C.greenSoft, color: C.green }}>נסרקו {session}</span>}
+          <button onClick={() => { setKeyDraft(getApiKey()); setShowKeySheet(true); }} aria-label="הגדרות זיהוי" className="rounded-lg p-1.5 active:scale-95" style={{ background: keyConfigured ? C.greenSoft : '#FEF3C7', color: keyConfigured ? C.green : '#92660A' }}>
+            <KeyRound className="w-4 h-4" />
+          </button>
+        </div>
       </div>
+
+      {!keyConfigured && stage === 'setup' && (
+        <div className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: '#FEF3C7', color: '#92660A' }}>
+          <FlaskConical className="w-4 h-4 mt-0.5 shrink-0" />
+          <span><b>מצב דמו:</b> לא הוגדר מפתח זיהוי, ולכן התוצאות מדומות ואינן מבוססות על התמונה. הקש על סמל המפתח כדי להפעיל זיהוי אמיתי.</span>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -285,6 +312,13 @@ export function Scan({ user, catalog, onCommit, session, backHome }: {
         <div className="space-y-3">
           <div className="text-sm rounded-xl p-3 flex gap-2" style={{ background: '#FEE2E2', color: '#B91C1C' }}><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />{err}</div>
           <button onClick={() => setStage('capture')} className="w-full rounded-xl py-4 font-extrabold flex items-center justify-center gap-2 active:scale-[0.98]" style={{ background: C.yellow, color: C.green }}><ScanLine className="w-5 h-5" /> נסה שוב</button>
+        </div>
+      )}
+
+      {(stage === 'confirm' || stage === 'review') && isDemo && (
+        <div className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: '#FEF3C7', color: '#92660A' }}>
+          <FlaskConical className="w-4 h-4 mt-0.5 shrink-0" />
+          <span><b>תוצאה מדומה (מצב דמו).</b> הזיהוי לא ניתח את התמונה. הגדר מפתח זיהוי (סמל המפתח למעלה) לזיהוי אמיתי.</span>
         </div>
       )}
 
@@ -356,6 +390,35 @@ export function Scan({ user, catalog, onCommit, session, backHome }: {
           </div>
           <button onClick={retake} className="w-full rounded-xl py-4 font-extrabold flex items-center justify-center gap-2 active:scale-[0.98]" style={{ background: C.yellow, color: C.green }}><ScanLine className="w-5 h-5" /> סרוק דוכן נוסף</button>
           <button onClick={backHome} className="w-full bg-stone-100 text-stone-600 rounded-xl py-3 font-semibold active:scale-[0.98]">סיום</button>
+        </div>
+      )}
+
+      {showKeySheet && (
+        <div className="fixed inset-0 z-50 flex items-end" style={{ background: 'rgba(0,0,0,0.35)' }}>
+          <div className="w-full bg-white rounded-t-3xl p-6 space-y-3 max-w-md mx-auto" style={{ paddingBottom: 30 }}>
+            <div className="mx-auto mb-1" style={{ width: 40, height: 4, borderRadius: 99, background: '#E7E5E1' }} />
+            <h3 className="font-extrabold text-lg flex items-center gap-2" style={{ color: C.green }}><KeyRound className="w-5 h-5" /> הגדרות זיהוי AI</h3>
+            <p className="text-xs text-stone-500 leading-relaxed">
+              הדבק מפתח API של Anthropic כדי להפעיל זיהוי אמיתי של התמונות (מתקבל ב-platform.claude.com).
+              המפתח נשמר במכשיר זה בלבד. ללא מפתח — האפליקציה רצה במצב דמו עם תוצאות מדומות.
+            </p>
+            <input
+              value={keyDraft}
+              onChange={(e) => setKeyDraft(e.target.value)}
+              placeholder="sk-ant-..."
+              dir="ltr"
+              autoComplete="off"
+              className="w-full bg-stone-50 border rounded-xl px-3 py-2.5 text-sm outline-none font-mono"
+              style={{ borderColor: C.line }}
+            />
+            <p className="text-[11px] text-stone-400 leading-relaxed">
+              לפיילוט בלבד: בגרסת הייצור הזיהוי יעבור דרך שרת, והמפתח לא יישמר במכשירים.
+            </p>
+            <div className="flex gap-2 mt-2">
+              <button onClick={() => setShowKeySheet(false)} className="flex-1 bg-stone-100 text-stone-600 rounded-xl py-3 font-semibold active:scale-[0.98]">ביטול</button>
+              <button onClick={saveKey} className="flex-1 rounded-xl py-3 font-extrabold active:scale-[0.98]" style={{ background: C.green, color: '#fff' }}>שמור</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

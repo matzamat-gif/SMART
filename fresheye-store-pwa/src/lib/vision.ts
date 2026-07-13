@@ -1,11 +1,23 @@
-// Vision AI seam — spec §6.
+// Vision AI — spec §6.
 //
-// In production this calls a backend endpoint that proxies the Anthropic
-// Messages API (the vision call MUST NOT be made directly from the client:
-// it needs a server-held API key). Until that backend exists, this module
-// returns believable mock detections so every screen is fully exercisable.
-// Swapping the mock body of `analyzePhoto` for a real `fetch('/api/scan')`
-// is the only change needed — nothing else in the app depends on this seam.
+// Two modes:
+//
+// 1. REAL (API key configured): calls the Anthropic Messages API directly from
+//    the browser with the photo(s) as base64 image blocks and a catalog-aware
+//    Hebrew prompt. The prompt instructs the model to return an EMPTY items
+//    list when the photo does not show a produce stand — so a selfie or a
+//    random photo yields "לא זוהו מוצרים" instead of a fake detection.
+//
+//    ⚠️ Direct browser access requires the user's own API key, stored only in
+//    this device's localStorage. That is acceptable for a pilot on trusted
+//    store devices; for production the call must move behind a backend proxy
+//    so no key ever ships to the client (swap the fetch URL for /api/scan —
+//    nothing else in the app changes).
+//
+// 2. DEMO (no key): returns preset fake detections so screens stay exercisable
+//    without any backend. The UI labels these results as simulated.
+
+import type { Catalog } from '../types';
 
 export interface RawDetection {
   product: string;
@@ -20,6 +32,116 @@ export interface CapturedImage {
   mediaType: string;
   url: string;
 }
+
+export interface AnalysisResult {
+  items: RawDetection[];
+  demo: boolean; // true when the result is simulated, not derived from the photo
+}
+
+const API_KEY_STORAGE = 'noy_vision_api_key_v1';
+// Model per the product spec (אפיון מפתח §2.1 / §6).
+const VISION_MODEL = 'claude-sonnet-4-6';
+
+export function getApiKey(): string {
+  try {
+    return localStorage.getItem(API_KEY_STORAGE) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setApiKey(key: string): void {
+  try {
+    if (key.trim()) localStorage.setItem(API_KEY_STORAGE, key.trim());
+    else localStorage.removeItem(API_KEY_STORAGE);
+  } catch {
+    // storage unavailable (private mode) — key just won't persist
+  }
+}
+
+export const hasApiKey = (): boolean => getApiKey().length > 0;
+
+// Catalog-aware prompt, spec §6: send the known product list + calibrated unit
+// weights and ask the model to pick names from it. Explicitly demands an empty
+// result for non-produce photos and honest confidence.
+function buildPrompt(catalog: Catalog, imageCount: number): string {
+  const catalogLines = Object.entries(catalog)
+    .map(([name, c]) => `- ${name}${c.bulk ? ' (תפזורת)' : ` (~${c.unitG} גרם ליחידה)`}`)
+    .join('\n');
+  return `אתה מנתח תמונה מחנות ירקות ופירות "נוי השדה". המטרה: לזהות אילו מוצרים נמצאים על הדוכן, לספור יחידות ולהעריך משקל.
+
+כללי ברזל:
+1. אם התמונה אינה מציגה דוכן/תצוגה/ארגזים של פירות או ירקות (למשל: אדם, חדר, מסך, חפץ אחר) — החזר {"items":[]} בלבד. לעולם אל תמציא מוצר.
+2. היה כן לגבי confidence: תמונה מטושטשת, חלקית או עמוסה = ביטחון נמוך. אל תנפח את הערך.
+3. בדרך כלל דוכן אחד מכיל מוצר אחד. אם יש כמה מוצרים ברורים — החזר פריט לכל אחד.
+4. ספירה: שורות × עמודות × שכבות. בערימה עמוקה הערך גם יחידות מוסתרות, לא רק את הנראות.
+
+הקטלוג המוכר (העדף שם מהרשימה, ביחיד):
+${catalogLines}
+
+לכל מוצר החזר:
+- product: שם בעברית, יחיד וסטנדרטי, מהקטלוג אם קיים
+- count: מספר יחידות (null אם תפזורת כמו ענבים/תות/פטריות)
+- unitWeightGrams: משקל ממוצע ליחידה בגרמים (0 אם תפזורת)
+- totalWeightGrams: הערכת משקל כולל בגרמים (חובה תמיד)
+- confidence: 0 עד 1
+
+${imageCount > 1 ? `יש ${imageCount} תמונות של אותו דוכן מזוויות שונות — שלב אותן להערכה מדויקת יותר.\n` : ''}החזר JSON בלבד, בלי טקסט נוסף ובלי backticks:
+{"items":[{"product":"","count":0,"unitWeightGrams":0,"totalWeightGrams":0,"confidence":0}]}`;
+}
+
+function parseItems(text: string): RawDetection[] {
+  if (!text) return [];
+  const clean = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+  const s = clean.indexOf('{');
+  const e = clean.lastIndexOf('}');
+  if (s === -1 || e === -1) return [];
+  try {
+    const parsed = JSON.parse(clean.slice(s, e + 1));
+    return Array.isArray(parsed.items) ? parsed.items : [];
+  } catch {
+    return [];
+  }
+}
+
+async function analyzeReal(images: CapturedImage[], catalog: Catalog): Promise<RawDetection[]> {
+  const content: unknown[] = images.map((im) => ({
+    type: 'image',
+    source: { type: 'base64', media_type: im.mediaType, data: im.b64 },
+  }));
+  content.push({ type: 'text', text: buildPrompt(catalog, images.length) });
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': getApiKey(),
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: VISION_MODEL,
+      max_tokens: 1024,
+      messages: [{ role: 'user', content }],
+    }),
+  });
+
+  if (!res.ok) {
+    if (res.status === 401) throw new Error('מפתח ה-API אינו תקין. בדוק אותו בהגדרות הזיהוי.');
+    if (res.status === 429) throw new Error('חרגת ממכסת הבקשות. נסה שוב בעוד רגע.');
+    throw new Error(`שגיאת שרת הזיהוי (${res.status}). נסה שוב.`);
+  }
+
+  const data = await res.json();
+  const text = (data.content || [])
+    .filter((c: { type: string }) => c.type === 'text')
+    .map((c: { text: string }) => c.text)
+    .join('')
+    .trim();
+  return parseItems(text);
+}
+
+// ---- Demo mode (no key configured) ----
 
 const MOCK_PRESETS: RawDetection[][] = [
   [{ product: 'עגבנייה', count: 14, unitWeightGrams: 110, totalWeightGrams: 1540, confidence: 0.71 }],
@@ -39,14 +161,15 @@ function mockAnalysis(presetIdx: number, imgCount: number): RawDetection[] {
   return base.map((it) => ({ ...it, confidence: Math.min(0.98, it.confidence + boost) }));
 }
 
-export async function analyzePhoto(images: CapturedImage[], presetIdx: number): Promise<RawDetection[]> {
-  // Simulated network + inference latency so the analyzing animation reads naturally.
+export async function analyzePhoto(images: CapturedImage[], catalog: Catalog, presetIdx: number): Promise<AnalysisResult> {
+  if (hasApiKey()) {
+    return { items: await analyzeReal(images, catalog), demo: false };
+  }
   await new Promise((r) => setTimeout(r, 300));
-  return mockAnalysis(presetIdx, images.length);
+  return { items: mockAnalysis(presetIdx, images.length), demo: true };
 }
 
-// Catalog-aware name matching, spec §6: normalize → exact → singular/plural →
-// containment → edit distance ≤ 2.
+// Catalog-aware name matching, spec §6: normalize → exact → containment → edit distance ≤ 2.
 function normalize(s: string): string {
   return s.trim().toLowerCase().replace(/["'׳״]/g, '');
 }

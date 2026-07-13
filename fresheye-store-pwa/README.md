@@ -42,13 +42,25 @@ different tab set and home screen:
   department), department + subcategory management with an "unassigned" bucket.
 - Brand design system as CSS tokens (`src/lib/brand.ts`), Assistant font, full RTL.
 
-## What's stubbed — do not wire until Stage 1 CV gate is green
+## Vision AI — real recognition vs demo mode
 
-- `src/lib/vision.ts` → `analyzePhoto()` returns mock detections behind a documented
-  seam. The Anthropic Vision call **must** be proxied through a backend (never
-  called directly from the client — that requires exposing an API key). Swapping
-  the mock body for a real `fetch('/api/scan')` is the only change needed; no
-  screen depends on this seam directly.
+`src/lib/vision.ts` has two modes:
+
+- **Real recognition** — tap the key icon on the scan screen and paste an Anthropic
+  API key (from platform.claude.com). The app then sends the photo(s) to the
+  Anthropic Messages API (`claude-sonnet-4-6`, per the spec) with a catalog-aware
+  Hebrew prompt. The prompt hard-requires an **empty result when the photo doesn't
+  show a produce stand** — a selfie yields "לא זוהו פירות או ירקות", never a fake
+  detection. The key is stored in this device's localStorage only.
+- **Demo mode** — with no key, results are simulated presets so all screens stay
+  exercisable. The UI labels every simulated result with a clear "מצב דמו" banner.
+
+⚠️ Direct-from-browser API calls are for the pilot only (trusted store devices,
+each with its own key). For production, move the call behind a backend proxy —
+swap the fetch URL in `analyzeReal()` for `/api/scan`; nothing else changes.
+
+## Still pending
+
 - Real PWA icons (192/512 PNG) before pilot install.
 
 ## Deliberately deferred (documented, not silently missing)

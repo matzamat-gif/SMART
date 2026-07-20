@@ -62,19 +62,26 @@ export function setApiKey(key: string): void {
 export const hasApiKey = (): boolean => getApiKey().length > 0;
 
 // Catalog-aware prompt, spec §6: send the known product list + calibrated unit
-// weights and ask the model to pick names from it. Explicitly demands an empty
-// result for non-produce photos and honest confidence.
+// weights and ask the model to pick names from it. Demands an empty result for
+// non-produce photos, a step-by-step counting method, and a strict confidence
+// rubric so the reported confidence actually tracks accuracy.
 function buildPrompt(catalog: Catalog, imageCount: number): string {
   const catalogLines = Object.entries(catalog)
     .map(([name, c]) => `- ${name}${c.bulk ? ' (תפזורת)' : ` (~${c.unitG} גרם ליחידה)`}`)
     .join('\n');
-  return `אתה מנתח תמונה מחנות ירקות ופירות "נוי השדה". המטרה: לזהות אילו מוצרים נמצאים על הדוכן, לספור יחידות ולהעריך משקל.
+  return `אתה מומחה לזיהוי וכימות תוצרת חקלאית. נתח תמונה מחנות "נוי השדה": זהה מוצר, ספור יחידות והערך משקל. התוצרת יכולה להיות על דוכן, בארגז, בקערה או על משטח אחר.
 
-כללי ברזל:
-1. אם התמונה אינה מציגה דוכן/תצוגה/ארגזים של פירות או ירקות (למשל: אדם, חדר, מסך, חפץ אחר) — החזר {"items":[]} בלבד. לעולם אל תמציא מוצר.
-2. היה כן לגבי confidence: תמונה מטושטשת, חלקית או עמוסה = ביטחון נמוך. אל תנפח את הערך.
-3. בדרך כלל דוכן אחד מכיל מוצר אחד. אם יש כמה מוצרים ברורים — החזר פריט לכל אחד.
-4. ספירה: שורות × עמודות × שכבות. בערימה עמוקה הערך גם יחידות מוסתרות, לא רק את הנראות.
+שיטת עבודה — בצע בסדר הזה:
+1. קבע מה מוצג. אם אין בתמונה פירות או ירקות כלל (אדם, חדר, מסך, חפץ) — החזר {"items":[]} בלבד. לעולם אל תמציא מוצר.
+2. זהה את המוצר לפי צבע, צורה, מרקם, גבעול ועלים. השווה לקטלוג שבהמשך. אם אתה מתלבט בין שני מוצרים — בחר את הסביר יותר והורד את הביטחון בהתאם. אל תדווח מוצר שאינך מזהה בבירור.
+3. ספור בשיטתיות: קודם יחידות גלויות (שורות × עמודות), ואז הוסף הערכת שכבות מוסתרות לפי עומק הכלי או הערימה. דוגמה: 8 עגבניות גלויות בקערה בעומק של ~2 שכבות → ~16 יחידות. אל תדווח רק את מה שנראה ואל תנפח מעבר לסביר.
+4. משקל: למוצר ספיר — count × משקל ליחידה. אם המוצר בקטלוג, השתמש במשקל הקטלוגי (הוא מכויל), אלא אם היחידות בתמונה חריגות בגודלן. לתפזורת — הערך totalWeightGrams לפי נפח.
+
+סולם confidence — היה כן וקפדני, הערך נבדק מול שקילה אמיתית:
+- 0.9 ומעלה: רק כשהמוצר ודאי לחלוטין וכל היחידות נראות וניתנות לספירה אחת-אחת.
+- 0.7–0.9: המוצר ודאי, אבל חלק מהיחידות מוסתרות והספירה כוללת הערכה.
+- 0.5–0.7: המוצר סביר אך התמונה חלקית, מטושטשת או עמוסה; הספירה גסה.
+- מתחת ל-0.5: הזיהוי עצמו לא בטוח. אם אינך בטוח מהו המוצר — לעולם אל תעלה מעל 0.5.
 
 הקטלוג המוכר (העדף שם מהרשימה, ביחיד):
 ${catalogLines}
@@ -84,10 +91,30 @@ ${catalogLines}
 - count: מספר יחידות (null אם תפזורת כמו ענבים/תות/פטריות)
 - unitWeightGrams: משקל ממוצע ליחידה בגרמים (0 אם תפזורת)
 - totalWeightGrams: הערכת משקל כולל בגרמים (חובה תמיד)
-- confidence: 0 עד 1
+- confidence: 0 עד 1 לפי הסולם למעלה
 
-${imageCount > 1 ? `יש ${imageCount} תמונות של אותו דוכן מזוויות שונות — שלב אותן להערכה מדויקת יותר.\n` : ''}החזר JSON בלבד, בלי טקסט נוסף ובלי backticks:
+${imageCount > 1 ? `יש ${imageCount} תמונות של אותו דוכן מזוויות שונות — שלב אותן: ספור לפי הזווית הברורה ביותר ואמת מול האחרות.\n` : ''}החזר JSON בלבד, בלי טקסט נוסף ובלי backticks:
 {"items":[{"product":"","count":0,"unitWeightGrams":0,"totalWeightGrams":0,"confidence":0}]}`;
+}
+
+// Phone photos can be 12MP+ — oversized for the API (5MB limit, and detail
+// beyond ~1.6K px doesn't help). Downscale client-side before sending.
+export function downscaleImage(im: CapturedImage, maxEdge = 1568, quality = 0.85): Promise<CapturedImage> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+      if (scale >= 1) { resolve(im); return; }
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height);
+      const url = c.toDataURL('image/jpeg', quality);
+      resolve({ b64: url.split(',')[1], mediaType: 'image/jpeg', url: im.url });
+    };
+    img.onerror = () => resolve(im);
+    img.src = im.url;
+  });
 }
 
 function parseItems(text: string): RawDetection[] {
@@ -105,7 +132,8 @@ function parseItems(text: string): RawDetection[] {
 }
 
 async function analyzeReal(images: CapturedImage[], catalog: Catalog): Promise<RawDetection[]> {
-  const content: unknown[] = images.map((im) => ({
+  const scaled = await Promise.all(images.map((im) => downscaleImage(im)));
+  const content: unknown[] = scaled.map((im) => ({
     type: 'image',
     source: { type: 'base64', media_type: im.mediaType, data: im.b64 },
   }));
@@ -121,7 +149,10 @@ async function analyzeReal(images: CapturedImage[], catalog: Catalog): Promise<R
     },
     body: JSON.stringify({
       model: VISION_MODEL,
-      max_tokens: 1024,
+      max_tokens: 4096,
+      // Adaptive thinking: the model reasons through identification and
+      // layer-counting before answering — measurably better than one-shot.
+      thinking: { type: 'adaptive' },
       messages: [{ role: 'user', content }],
     }),
   });

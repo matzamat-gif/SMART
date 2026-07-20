@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { BarChart3, Camera, Leaf, LogOut, Package, Settings2 } from 'lucide-react';
-import type { Catalog, DeptId, Inventory, LogEntry, Place, ScanItem, Subcat, User } from './types';
+import type { Catalog, DeptId, Inventory, LogEntry, Place, ScanItem, ScanRecord, Subcat, User } from './types';
 import { BRANCHES, ROLE_LABELS, SEED_CATALOG, SEED_SUBCATS, seedInventory } from './data/seed';
 import { C } from './lib/brand';
 import { Login } from './components/Login';
@@ -14,6 +14,29 @@ type View = 'home' | 'scan' | 'inventory' | 'dashboard' | 'catalog';
 type HistoryKey = string; // `${branchId}::${product}::${place}`
 interface HistoryPoint { kg: number; at: number; }
 
+const RECORDS_STORAGE = 'noy_scan_records_v1';
+const MAX_RECORDS = 50;
+
+function loadRecords(): ScanRecord[] {
+  try {
+    const raw = localStorage.getItem(RECORDS_STORAGE);
+    return raw ? (JSON.parse(raw) as ScanRecord[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistRecords(records: ScanRecord[]) {
+  try {
+    localStorage.setItem(RECORDS_STORAGE, JSON.stringify(records));
+  } catch {
+    // quota exceeded — retry without image thumbnails
+    try {
+      localStorage.setItem(RECORDS_STORAGE, JSON.stringify(records.map((r) => ({ ...r, imageThumb: null }))));
+    } catch { /* storage unavailable */ }
+  }
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [catalog, setCatalog] = useState<Catalog>(SEED_CATALOG);
@@ -21,9 +44,11 @@ export default function App() {
   const [inventory, setInventory] = useState<Inventory>(seedInventory);
   const [history, setHistory] = useState<Record<HistoryKey, HistoryPoint>>({});
   const [log, setLog] = useState<LogEntry[]>([]);
+  const [records, setRecords] = useState<ScanRecord[]>(loadRecords);
   const [view, setView] = useState<View>('home');
   const [session, setSession] = useState(0);
-  const [threshold, setThreshold] = useState(75);
+  // Pilot default: 85% — more scans go through human review until trust is built.
+  const [threshold, setThreshold] = useState(85);
 
   const branch = (id: string) => BRANCHES.find((b) => b.id === id)!;
   const deptOf = (product: string): DeptId | null => {
@@ -60,8 +85,16 @@ export default function App() {
       items.forEach((it) => {
         if (!next[it.product]) {
           next[it.product] = { unitG: it.bulk ? 0 : Math.max(1, Math.round(it.unitG || 0)), boxKg: it.bulk ? Math.max(1, Math.round(it.weightKg)) : 0, par: 15, reorder: 4, bulk: !!it.bulk, cat: null, freshH: 24, calib: 0 };
-        } else if (!it.isNew) {
-          next[it.product] = { ...next[it.product], calib: next[it.product].calib + 1 };
+        } else if (it.unitEdited && !it.bulk && it.unitG > 0) {
+          // Field calibration (spec §1 מטרות-על): a clerk-corrected unit weight
+          // recalibrates the catalog. Blend 50/50 with the current value so a
+          // single outlier correction doesn't swing the whole catalog.
+          const cur = next[it.product].unitG;
+          const corrected = Math.round(it.unitG);
+          const blended = cur > 0 ? Math.round((cur + corrected) / 2) : corrected;
+          if (blended !== cur) {
+            next[it.product] = { ...next[it.product], unitG: blended, calib: next[it.product].calib + 1 };
+          }
         }
       });
       return next;
@@ -69,6 +102,19 @@ export default function App() {
     const entry: LogEntry = { id: `${t}_${Math.random()}`, branchId, by: byName, when: t, kind: 'scan', items: items.map((i) => ({ product: i.product, kg: i.weightKg, place })) };
     setLog((prev) => [entry, ...prev].slice(0, 60));
     setSession((s) => s + 1);
+  }
+
+  function addRecord(r: Omit<ScanRecord, 'id'>) {
+    setRecords((prev) => {
+      const next = [{ ...r, id: `${r.at}_${Math.random().toString(36).slice(2, 8)}` }, ...prev].slice(0, MAX_RECORDS);
+      persistRecords(next);
+      return next;
+    });
+  }
+
+  function clearRecords() {
+    setRecords([]);
+    persistRecords([]);
   }
 
   function reportWaste(branchId: string, product: string, place: Place, amountKg: number) {
@@ -118,10 +164,10 @@ export default function App() {
 
         <main className="flex-1 overflow-y-auto pb-24 relative">
           {view === 'home' && <Home user={user} branch={branch} catalog={catalog} inventory={inventory} deptOf={deptOf} history={history} session={session} go={setView} />}
-          {view === 'scan' && <Scan user={user} catalog={catalog} onCommit={commitScan} session={session} backHome={() => setView('home')} />}
+          {view === 'scan' && <Scan user={user} catalog={catalog} threshold={threshold} onCommit={commitScan} onRecord={addRecord} session={session} backHome={() => setView('home')} />}
           {view === 'inventory' && <InventoryScreen user={user} catalog={catalog} inventory={inventory} deptOf={deptOf} onWaste={reportWaste} />}
           {view === 'dashboard' && <Dashboard user={user} branch={branch} catalog={catalog} inventory={inventory} deptOf={deptOf} log={log} />}
-          {view === 'catalog' && <CatalogScreen catalog={catalog} setCatalog={setCatalog} subcats={subcats} setSubcats={setSubcats} threshold={threshold} setThreshold={setThreshold} />}
+          {view === 'catalog' && <CatalogScreen catalog={catalog} setCatalog={setCatalog} subcats={subcats} setSubcats={setSubcats} threshold={threshold} setThreshold={setThreshold} records={records} onClearRecords={clearRecords} />}
         </main>
 
         <nav className="absolute bottom-0 inset-x-0 bg-white px-2 py-2 flex justify-around z-20" style={{ borderTop: `1px solid ${C.line}` }}>

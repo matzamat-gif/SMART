@@ -1,17 +1,19 @@
 import { useState } from 'react';
-import { FolderTree, Package, Plus, Settings2 } from 'lucide-react';
-import type { Catalog as CatalogData, DeptId, Subcat } from '../types';
+import { Database, Download, FolderTree, Package, Plus, Settings2, Trash2 } from 'lucide-react';
+import type { Catalog as CatalogData, DeptId, ScanRecord, Subcat } from '../types';
 import { DEPTS } from '../data/seed';
 import { C } from '../lib/brand';
 import { NumField } from './ui';
 
-export function Catalog({ catalog, setCatalog, subcats, setSubcats, threshold, setThreshold }: {
+export function Catalog({ catalog, setCatalog, subcats, setSubcats, threshold, setThreshold, records, onClearRecords }: {
   catalog: CatalogData;
   setCatalog: React.Dispatch<React.SetStateAction<CatalogData>>;
   subcats: Subcat[];
   setSubcats: React.Dispatch<React.SetStateAction<Subcat[]>>;
   threshold: number;
   setThreshold: (n: number) => void;
+  records: ScanRecord[];
+  onClearRecords: () => void;
 }) {
   const [tab, setTab] = useState<'products' | 'depts'>('products');
   return (
@@ -27,6 +29,8 @@ export function Catalog({ catalog, setCatalog, subcats, setSubcats, threshold, s
         <p className="text-[11px] text-stone-400 mt-1">מתחת לסף — סריקה עוברת לסקירה מלאה במקום אישור מהיר.</p>
       </div>
 
+      <TrainingData records={records} onClear={onClearRecords} />
+
       <div className="flex gap-1 p-1 rounded-xl bg-white shadow-sm">
         {([['products', 'מוצרים', Package], ['depts', 'מחלקות', FolderTree]] as const).map(([id, label, Icon]) => (
           <button key={id} onClick={() => setTab(id)} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-bold transition" style={tab === id ? { background: C.green, color: '#fff' } : { color: '#78716C' }}>
@@ -38,6 +42,44 @@ export function Catalog({ catalog, setCatalog, subcats, setSubcats, threshold, s
       {tab === 'products'
         ? <Products catalog={catalog} setCatalog={setCatalog} subcats={subcats} />
         : <Depts catalog={catalog} subcats={subcats} setSubcats={setSubcats} />}
+    </div>
+  );
+}
+
+function TrainingData({ records, onClear }: { records: ScanRecord[]; onClear: () => void }) {
+  const real = records.filter((r) => !r.demo);
+  const correctedCount = real.filter((r) => r.corrected).length;
+  const accuracy = real.length ? Math.round(((real.length - correctedCount) / real.length) * 100) : null;
+
+  function exportJson() {
+    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), records }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `noy-scan-records-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="bg-white rounded-2xl p-4 shadow-sm">
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="text-sm font-bold flex items-center gap-1.5" style={{ color: C.green }}><Database className="w-4 h-4" /> נתוני אימון מהפיילוט</h3>
+        {records.length > 0 && (
+          <button onClick={() => { if (confirm('למחוק את כל נתוני האימון שנאספו?')) onClear(); }} className="rounded-lg p-1.5 active:scale-90" style={{ color: '#B91C1C' }} aria-label="נקה נתונים"><Trash2 className="w-4 h-4" /></button>
+        )}
+      </div>
+      <p className="text-[11px] text-stone-400 leading-relaxed mb-2">
+        כל סריקה נשמרת עם תוצאת ה-AI מול האישור הסופי של המוכרן — הבסיס לשיפור הדיוק לאורך הפיילוט.
+      </p>
+      <div className="flex items-center gap-4 text-sm mb-3">
+        <span><b style={{ color: C.green }}>{records.length}</b> <span className="text-stone-400 text-xs">סריקות</span></span>
+        <span><b style={{ color: C.green }}>{real.length}</b> <span className="text-stone-400 text-xs">זיהוי אמיתי</span></span>
+        {accuracy != null && <span><b style={{ color: accuracy >= 80 ? C.green : '#B45309' }}>{accuracy}%</b> <span className="text-stone-400 text-xs">ללא תיקון ידני</span></span>}
+      </div>
+      <button onClick={exportJson} disabled={!records.length} className="w-full rounded-xl py-2.5 text-sm font-bold flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-40" style={{ background: C.greenSoft, color: C.green }}>
+        <Download className="w-4 h-4" /> ייצוא נתוני אימון (JSON)
+      </button>
     </div>
   );
 }

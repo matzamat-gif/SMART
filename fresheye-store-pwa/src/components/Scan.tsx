@@ -3,14 +3,12 @@ import {
   AlertTriangle, Camera, Check, CheckCircle2, FlaskConical, ImagePlus, Info, KeyRound,
   Loader2, ScanLine, TrendingDown, TrendingUp, X, Zap,
 } from 'lucide-react';
-import type { Catalog, Place, ScanItem, User } from '../types';
+import type { Catalog, Place, ScanItem, ScanRecord, User } from '../types';
 import { BRANCHES } from '../data/seed';
 import { C } from '../lib/brand';
 import { kg, nowStr } from '../lib/format';
-import { analyzePhoto, getApiKey, hasApiKey, matchCatalogName, setApiKey, type CapturedImage } from '../lib/vision';
+import { analyzePhoto, downscaleImage, getApiKey, hasApiKey, matchCatalogName, setApiKey, type CapturedImage } from '../lib/vision';
 import { NumField } from './ui';
-
-const CONFIDENCE_THRESHOLD = 0.75;
 const ANALYZE_STEPS = ['מעלה את התמונה', 'מזהה פריטים', 'סופר יחידות', 'מעריך משקל'];
 
 function AnalyzeOverlay({ imgUrl }: { imgUrl?: string }) {
@@ -129,7 +127,8 @@ function CameraCapture({ onClose, onCapture, err, count }: {
           )}
           <div className="absolute inset-0 flex flex-col items-center justify-center px-10 pointer-events-none">
             <div className="w-full rounded-2xl border-2 border-dashed" style={{ aspectRatio: '4 / 3', borderColor: 'rgba(255,255,255,0.6)' }} />
-            <p className="text-white/90 text-sm font-semibold mt-4">כוון לדוכן המלא</p>
+            <p className="text-white/90 text-sm font-semibold mt-4">מלא את הפריים עם כל הדוכן</p>
+            <p className="text-white/60 text-xs mt-1">צלם ניצב לדוכן · הימנע מצל וסנוור · התקרב עד שהתוצרת ממלאת את המסגרת</p>
           </div>
           {err && (
             <div className="absolute inset-x-6 top-4 rounded-xl px-3 py-2 text-sm font-semibold text-center flex items-center justify-center gap-1.5" style={{ background: 'rgba(226,92,92,0.95)', color: '#fff' }}>
@@ -166,13 +165,16 @@ function CameraCapture({ onClose, onCapture, err, count }: {
 type ConfMsg = { tone: 'up' | 'down' | 'flat'; text: string } | null;
 type Stage = 'setup' | 'capture' | 'analyzing' | 'confirm' | 'review' | 'saved' | 'error';
 
-export function Scan({ user, catalog, onCommit, session, backHome }: {
+export function Scan({ user, catalog, threshold, onCommit, onRecord, session, backHome }: {
   user: User;
   catalog: Catalog;
+  threshold: number; // uncertainty threshold in percent (Catalog screen slider)
   onCommit: (branchId: string, place: Place, items: ScanItem[], byName: string) => void;
+  onRecord: (r: Omit<ScanRecord, 'id'>) => void;
   session: number;
   backHome: () => void;
 }) {
+  const CONFIDENCE_THRESHOLD = threshold / 100;
   const [branchId, setBranchId] = useState(user.branch || BRANCHES[0].id);
   const [place, setPlace] = useState<Place>('store');
   const [imgs, setImgs] = useState<CapturedImage[]>([]);
@@ -186,6 +188,7 @@ export function Scan({ user, catalog, onCommit, session, backHome }: {
   const [keyConfigured, setKeyConfigured] = useState(() => hasApiKey());
   const presetRef = useRef(Math.floor(Math.random() * 6));
   const prevConfRef = useRef<number | null>(null);
+  const aiSnapshotRef = useRef<ScanItem[]>([]);
   const catalogNames = Object.keys(catalog);
 
   async function runAnalysis(list: CapturedImage[]) {
@@ -227,6 +230,7 @@ export function Scan({ user, catalog, onCommit, session, backHome }: {
       } else setConfMsg(null);
       prevConfRef.current = avg;
 
+      aiSnapshotRef.current = rows.map((r) => ({ ...r }));
       setItems(rows);
       setStage(list.length === 1 && rows.length === 1 && rows[0].confidence >= CONFIDENCE_THRESHOLD && !rows[0].isNew ? 'confirm' : 'review');
     } catch (e) {
@@ -241,12 +245,40 @@ export function Scan({ user, catalog, onCommit, session, backHome }: {
     setItems((prev) => prev.map((r, idx) => {
       if (idx !== i) return r;
       const n = { ...r, ...patch };
+      if ('unitG' in patch) n.unitEdited = true;
       if (!n.bulk && Number(n.unitG) > 0) n.weightKg = Math.round((Number(n.count) * Number(n.unitG)) / 100) / 10;
       return n;
     }));
   }
-  function retake() { setImgs([]); setItems([]); setErr(''); setConfMsg(null); prevConfRef.current = null; presetRef.current = Math.floor(Math.random() * 6); setStage('setup'); }
-  function save() { onCommit(branchId, place, items, user.name); setStage('saved'); }
+  function retake() { setImgs([]); setItems([]); setErr(''); setConfMsg(null); prevConfRef.current = null; aiSnapshotRef.current = []; presetRef.current = Math.floor(Math.random() * 6); setStage('setup'); }
+
+  async function save() {
+    onCommit(branchId, place, items, user.name);
+    setStage('saved');
+    // Record AI-vs-final for the pilot training dataset (spec improvement #4).
+    const ai = aiSnapshotRef.current;
+    const strip = (r: ScanItem) => ({ product: r.product, count: r.count, unitG: r.unitG, weightKg: r.weightKg });
+    const corrected = JSON.stringify(ai.map(strip)) !== JSON.stringify(items.map(strip));
+    let imageThumb: string | null = null;
+    const last = imgs[imgs.length - 1];
+    if (last) {
+      try {
+        const t = await downscaleImage(last, 320, 0.6);
+        imageThumb = `data:image/jpeg;base64,${t.b64}`;
+      } catch { /* thumbnail is best-effort */ }
+    }
+    onRecord({
+      at: Date.now(),
+      branchId,
+      place,
+      demo: isDemo,
+      photos: imgs.length,
+      corrected,
+      ai: ai.map((r) => ({ ...strip(r), confidence: r.confidence })),
+      final: items.map(strip),
+      imageThumb,
+    });
+  }
 
   const lastUrl = imgs[imgs.length - 1]?.url;
   const branchObj = BRANCHES.find((b) => b.id === branchId)!;
@@ -349,6 +381,12 @@ export function Scan({ user, catalog, onCommit, session, backHome }: {
             </div>
           ) : (
             <div className="rounded-xl p-3 text-sm flex items-center gap-2" style={{ background: C.greenSoft, color: C.green }}><Check className="w-4 h-4" /> בדוק ותקן לפני שמירה.</div>
+          )}
+          {imgs.length === 1 && items.length > 0 && items.reduce((s, r) => s + r.confidence, 0) / items.length < CONFIDENCE_THRESHOLD && (
+            <div className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: '#E0F2FE', color: '#0369A1' }}>
+              <ImagePlus className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>הביטחון מתחת לסף ({threshold}%). צילום נוסף מזווית אחרת בדרך כלל משפר את הספירה — הקש "הוסף תמונה לדיוק".</span>
+            </div>
           )}
           {items.map((r, i) => (
             <div key={i} className="bg-white rounded-2xl p-4 shadow-sm space-y-3">

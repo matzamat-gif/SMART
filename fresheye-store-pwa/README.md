@@ -59,6 +59,27 @@ different tab set and home screen:
 each with its own key). For production, move the call behind a backend proxy —
 swap the fetch URL in `analyzeReal()` for `/api/scan`; nothing else changes.
 
+## Accuracy levers (all active)
+
+1. **Field calibration** — when a clerk manually corrects a unit weight in the
+   review screen, the catalog value recalibrates (50/50 blend) and the product
+   gets a "מכויל ×N" tag. Calibrate against real store-scale weighings.
+2. **Multi-photo** — "הוסף תמונה לדיוק" merges angles; a nudge appears
+   automatically when a single-photo result lands under the threshold.
+3. **Uncertainty threshold** — the Catalog slider is wired into the scan flow;
+   pilot default is 85% (raise scrutiny early, relax as trust builds).
+4. **Training data** — every save records the AI result vs the clerk-approved
+   result + a photo thumbnail (last 50, localStorage). The exec Catalog screen
+   shows accuracy stats and exports the dataset as JSON — the base for prompt
+   tuning and, later, a dedicated counting model (YOLO/Roboflow).
+5. **Photography guidance** — concrete instructions in the camera overlay
+   (fill the frame, shoot straight-on, avoid shadow/glare).
+
+Under the hood, requests use adaptive thinking (the model reasons through
+identification and layer-counting), photos are downscaled client-side to
+1568px, and the prompt enforces a strict confidence rubric — never above 0.5
+when product identity is uncertain.
+
 ## Still pending
 
 - Real PWA icons (192/512 PNG) before pilot install.

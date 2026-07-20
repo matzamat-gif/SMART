@@ -84,4 +84,27 @@ export interface ScanItem {
   weightKg: number;
   confidence: number;
   isNew: boolean;
+  unitEdited?: boolean; // clerk manually corrected the unit weight → calibrates the catalog
+}
+
+// Pilot training data: what the AI said vs. what the clerk approved.
+export interface ScanRecordItem {
+  product: string;
+  count: number | null;
+  unitG: number;
+  weightKg: number;
+  confidence?: number;
+}
+
+export interface ScanRecord {
+  id: string;
+  at: number;
+  branchId: string;
+  place: Place;
+  demo: boolean;
+  photos: number;
+  corrected: boolean;
+  ai: ScanRecordItem[];
+  final: ScanRecordItem[];
+  imageThumb: string | null; // small JPEG data URL for later labeling
 }

@@ -8,6 +8,7 @@ import { BRANCHES } from '../data/seed';
 import { C } from '../lib/brand';
 import { kg, nowStr } from '../lib/format';
 import { analyzePhoto, downscaleImage, getApiKey, hasApiKey, matchCatalogName, setApiKey, testApiKey, type CapturedImage } from '../lib/vision';
+import { APP_VERSION } from '../version';
 import { NumField } from './ui';
 const ANALYZE_STEPS = ['מעלה את התמונה', 'מזהה פריטים', 'סופר יחידות', 'מעריך משקל'];
 
@@ -299,7 +300,11 @@ export function Scan({ user, catalog, threshold, onCommit, onRecord, session, ba
   return (
     <div className="p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2"><Camera className="w-5 h-5" style={{ color: C.green }} /><h2 className="text-lg font-extrabold" style={{ color: C.green }}>סריקת דוכן</h2></div>
+        <div className="flex items-center gap-2">
+          <Camera className="w-5 h-5" style={{ color: C.green }} />
+          <h2 className="text-lg font-extrabold" style={{ color: C.green }}>סריקת דוכן</h2>
+          <span className="text-[10px] text-stone-400 font-mono">{APP_VERSION}</span>
+        </div>
         <div className="flex items-center gap-2">
           {session > 0 && <span className="text-xs rounded-full px-2.5 py-1 font-bold" style={{ background: C.greenSoft, color: C.green }}>נסרקו {session}</span>}
           <button onClick={() => { setKeyDraft(getApiKey()); setShowKeySheet(true); }} aria-label="הגדרות זיהוי" className="rounded-lg p-1.5 active:scale-95" style={{ background: keyConfigured ? C.greenSoft : '#FEF3C7', color: keyConfigured ? C.green : '#92660A' }}>

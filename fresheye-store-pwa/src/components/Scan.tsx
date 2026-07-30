@@ -7,7 +7,7 @@ import type { Catalog, Place, ScanItem, ScanRecord, User } from '../types';
 import { BRANCHES } from '../data/seed';
 import { C } from '../lib/brand';
 import { kg, nowStr } from '../lib/format';
-import { analyzePhoto, downscaleImage, getApiKey, hasApiKey, matchCatalogName, setApiKey, type CapturedImage } from '../lib/vision';
+import { analyzePhoto, downscaleImage, getApiKey, hasApiKey, matchCatalogName, setApiKey, testApiKey, type CapturedImage } from '../lib/vision';
 import { NumField } from './ui';
 const ANALYZE_STEPS = ['מעלה את התמונה', 'מזהה פריטים', 'סופר יחידות', 'מעריך משקל'];
 
@@ -186,6 +186,8 @@ export function Scan({ user, catalog, threshold, onCommit, onRecord, session, ba
   const [showKeySheet, setShowKeySheet] = useState(false);
   const [keyDraft, setKeyDraft] = useState('');
   const [keyConfigured, setKeyConfigured] = useState(() => hasApiKey());
+  const [keyTest, setKeyTest] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testing, setTesting] = useState(false);
   const presetRef = useRef(Math.floor(Math.random() * 6));
   const prevConfRef = useRef<number | null>(null);
   const aiSnapshotRef = useRef<ScanItem[]>([]);
@@ -306,10 +308,15 @@ export function Scan({ user, catalog, threshold, onCommit, onRecord, session, ba
         </div>
       </div>
 
-      {!keyConfigured && stage === 'setup' && (
+      {/* Always-visible mode indicator — removes any doubt about real vs demo. */}
+      {keyConfigured ? (
+        <div className="rounded-xl px-3 py-2 text-xs flex items-center gap-2" style={{ background: C.greenSoft, color: C.green }}>
+          <CheckCircle2 className="w-4 h-4 shrink-0" /><b>זיהוי אמיתי פעיל</b> — התמונות מנותחות ב-AI.
+        </div>
+      ) : (
         <div className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: '#FEF3C7', color: '#92660A' }}>
           <FlaskConical className="w-4 h-4 mt-0.5 shrink-0" />
-          <span><b>מצב דמו:</b> לא הוגדר מפתח זיהוי, ולכן התוצאות מדומות ואינן מבוססות על התמונה. הקש על סמל המפתח כדי להפעיל זיהוי אמיתי.</span>
+          <span><b>מצב דמו — תוצאות מדומות.</b> לא הוגדר מפתח, והתוצאות אינן מבוססות על התמונה. הקש על סמל המפתח 🔑 כדי להפעיל זיהוי אמיתי.</span>
         </div>
       )}
 
@@ -452,8 +459,32 @@ export function Scan({ user, catalog, threshold, onCommit, onRecord, session, ba
             <p className="text-[11px] text-stone-400 leading-relaxed">
               לפיילוט בלבד: בגרסת הייצור הזיהוי יעבור דרך שרת, והמפתח לא יישמר במכשירים.
             </p>
-            <div className="flex gap-2 mt-2">
-              <button onClick={() => setShowKeySheet(false)} className="flex-1 bg-stone-100 text-stone-600 rounded-xl py-3 font-semibold active:scale-[0.98]">ביטול</button>
+
+            {keyTest && (
+              <div className="rounded-xl p-3 text-xs flex items-start gap-2" style={keyTest.ok ? { background: C.greenSoft, color: C.green } : { background: '#FEE2E2', color: '#B91C1C' }}>
+                {keyTest.ok ? <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />}
+                <span>{keyTest.message}</span>
+              </div>
+            )}
+
+            <button
+              onClick={async () => {
+                setApiKey(keyDraft);
+                setKeyConfigured(hasApiKey());
+                setTesting(true);
+                setKeyTest(null);
+                setKeyTest(await testApiKey());
+                setTesting(false);
+              }}
+              disabled={testing || !keyDraft.trim()}
+              className="w-full rounded-xl py-2.5 text-sm font-bold flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-40"
+              style={{ background: '#fff', color: C.green, border: `1px solid ${C.line}` }}
+            >
+              {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />} בדוק מפתח
+            </button>
+
+            <div className="flex gap-2 mt-1">
+              <button onClick={() => { setShowKeySheet(false); setKeyTest(null); }} className="flex-1 bg-stone-100 text-stone-600 rounded-xl py-3 font-semibold active:scale-[0.98]">סגור</button>
               <button onClick={saveKey} className="flex-1 rounded-xl py-3 font-extrabold active:scale-[0.98]" style={{ background: C.green, color: '#fff' }}>שמור</button>
             </div>
           </div>

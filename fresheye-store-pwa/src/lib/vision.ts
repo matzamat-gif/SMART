@@ -117,6 +117,36 @@ export function downscaleImage(im: CapturedImage, maxEdge = 1568, quality = 0.85
   });
 }
 
+// Pings the API with a tiny request to verify the key works end-to-end:
+// authentication, billing/credit, model access, and browser CORS. Returns a
+// clear pass/fail so the user isn't guessing whether real recognition is live.
+export async function testApiKey(): Promise<{ ok: boolean; message: string }> {
+  const key = getApiKey();
+  if (!key) return { ok: false, message: 'לא הוזן מפתח. הדבק מפתח ולחץ שמור.' };
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({ model: VISION_MODEL, max_tokens: 4, messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    if (res.ok) return { ok: true, message: 'המפתח תקין וזיהוי אמיתי פעיל. אפשר לסרוק.' };
+    let detail = '';
+    try { detail = (await res.json())?.error?.message || ''; } catch { /* ignore */ }
+    if (res.status === 401) return { ok: false, message: 'מפתח לא תקין (401). ודא שהעתקת אותו במלואו מ-console.anthropic.com.' };
+    if (res.status === 400 && /credit|balance|billing/i.test(detail)) return { ok: false, message: 'אין קרדיט בחשבון. הוסף אמצעי תשלום ב-console.anthropic.com ← Billing.' };
+    if (res.status === 429) return { ok: false, message: 'חריגה ממכסת הבקשות (429). המתן רגע ונסה שוב.' };
+    return { ok: false, message: `שגיאת שרת (${res.status})${detail ? ': ' + detail : ''}.` };
+  } catch {
+    // A thrown fetch is almost always a network/CORS problem, not a bad key.
+    return { ok: false, message: 'לא הצלחתי להגיע לשרת (בעיית רשת). בדוק חיבור אינטרנט ונסה שוב.' };
+  }
+}
+
 function parseItems(text: string): RawDetection[] {
   if (!text) return [];
   const clean = text.replace(/```json/gi, '').replace(/```/g, '').trim();
@@ -149,7 +179,10 @@ async function analyzeReal(images: CapturedImage[], catalog: Catalog): Promise<R
     },
     body: JSON.stringify({
       model: VISION_MODEL,
-      max_tokens: 4096,
+      // Generous budget: adaptive thinking counts against max_tokens, and on a
+      // busy stand the model needs room to reason AND still emit the full JSON.
+      // Too low and the answer is truncated (read as "no produce").
+      max_tokens: 8000,
       // Adaptive thinking: the model reasons through identification and
       // layer-counting before answering — measurably better than one-shot.
       thinking: { type: 'adaptive' },
@@ -169,7 +202,13 @@ async function analyzeReal(images: CapturedImage[], catalog: Catalog): Promise<R
     .map((c: { text: string }) => c.text)
     .join('')
     .trim();
-  return parseItems(text);
+  const items = parseItems(text);
+  // If the response was cut off before the JSON finished, don't mislabel it as
+  // "no produce" — tell the user the analysis was truncated so they can retry.
+  if (!items.length && data.stop_reason === 'max_tokens') {
+    throw new Error('הניתוח נקטע לפני שהסתיים. נסה שוב, או צלם פחות סוגים בפריים אחד.');
+  }
+  return items;
 }
 
 // ---- Demo mode (no key configured) ----

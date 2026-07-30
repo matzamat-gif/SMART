@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle, Camera, Check, CheckCircle2, FlaskConical, ImagePlus, Info, KeyRound,
-  Loader2, ScanLine, TrendingDown, TrendingUp, X, Zap,
+  Loader2, ScanLine, Trash2, TrendingDown, TrendingUp, X, Zap,
 } from 'lucide-react';
 import type { Catalog, Place, ScanItem, ScanRecord, User } from '../types';
 import { BRANCHES } from '../data/seed';
@@ -253,6 +253,7 @@ export function Scan({ user, catalog, threshold, onCommit, onRecord, session, ba
       return n;
     }));
   }
+  function removeRow(i: number) { setItems((prev) => prev.filter((_, idx) => idx !== i)); }
   function retake() { setImgs([]); setItems([]); setErr(''); setConfMsg(null); prevConfRef.current = null; aiSnapshotRef.current = []; presetRef.current = Math.floor(Math.random() * 6); setStage('setup'); }
 
   async function save() {
@@ -407,6 +408,7 @@ export function Scan({ user, catalog, threshold, onCommit, onRecord, session, ba
                 <div className="flex items-center gap-1.5">
                   {r.isNew && <span className="text-[10px] rounded-full px-2 py-0.5" style={{ background: '#E0F2FE', color: '#0369A1' }}>חדש</span>}
                   <span className="text-[10px] rounded-full px-2 py-0.5" style={r.confidence < CONFIDENCE_THRESHOLD ? { background: '#FEF3C7', color: '#92660A' } : { background: '#F5F5F4', color: '#78716C' }}>ביטחון {Math.round(r.confidence * 100)}%</span>
+                  <button onClick={() => removeRow(i)} aria-label={`הסר ${r.product}`} className="rounded-lg p-1 active:scale-90 transition" style={{ background: '#FEE2E2', color: '#B91C1C' }}><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2 text-sm">
@@ -422,10 +424,13 @@ export function Scan({ user, catalog, threshold, onCommit, onRecord, session, ba
               </div>
             </div>
           ))}
+          {items.length === 0 && (
+            <div className="rounded-xl p-3 text-sm flex items-center gap-2" style={{ background: '#FEF3C7', color: '#92660A' }}><AlertTriangle className="w-4 h-4 shrink-0" /> כל הפריטים הוסרו. צלם מחדש כדי להתחיל.</div>
+          )}
           <button onClick={addMore} className="w-full rounded-xl py-3 font-semibold flex items-center justify-center gap-2 active:scale-[0.98]" style={{ background: '#fff', color: C.green, border: `1px solid ${C.line}` }}><ImagePlus className="w-5 h-5" /> הוסף תמונה לדיוק</button>
           <div className="flex gap-2">
             <button onClick={retake} className="flex-1 bg-stone-100 text-stone-600 rounded-xl py-3 font-semibold active:scale-[0.98]">צלם מחדש</button>
-            <button onClick={save} className="flex-1 rounded-xl py-3 font-extrabold flex items-center justify-center gap-2 active:scale-[0.98]" style={{ background: C.green, color: '#fff' }}><Check className="w-5 h-5" /> שמור למלאי</button>
+            <button onClick={save} disabled={items.length === 0} className="flex-1 rounded-xl py-3 font-extrabold flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-40" style={{ background: C.green, color: '#fff' }}><Check className="w-5 h-5" /> שמור למלאי</button>
           </div>
         </div>
       )}

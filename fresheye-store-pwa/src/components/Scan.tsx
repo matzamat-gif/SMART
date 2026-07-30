@@ -129,7 +129,7 @@ function CameraCapture({ onClose, onCapture, err, count }: {
           <div className="absolute inset-0 flex flex-col items-center justify-center px-10 pointer-events-none">
             <div className="w-full rounded-2xl border-2 border-dashed" style={{ aspectRatio: '4 / 3', borderColor: 'rgba(255,255,255,0.6)' }} />
             <p className="text-white/90 text-sm font-semibold mt-4">מלא את הפריים עם כל הדוכן</p>
-            <p className="text-white/60 text-xs mt-1">צלם ניצב לדוכן · הימנע מצל וסנוור · התקרב עד שהתוצרת ממלאת את המסגרת</p>
+            <p className="text-white/60 text-xs mt-1">צלם ניצב לדוכן · הימנע מצל וסנוור · ודא ששלטי המחיר קריאים — הם משפרים את הזיהוי</p>
           </div>
           {err && (
             <div className="absolute inset-x-6 top-4 rounded-xl px-3 py-2 text-sm font-semibold text-center flex items-center justify-center gap-1.5" style={{ background: 'rgba(226,92,92,0.95)', color: '#fff' }}>

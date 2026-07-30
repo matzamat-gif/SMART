@@ -161,13 +161,27 @@ function parseItems(text: string): RawDetection[] {
   }
 }
 
-async function analyzeReal(images: CapturedImage[], catalog: Catalog): Promise<RawDetection[]> {
-  const scaled = await Promise.all(images.map((im) => downscaleImage(im)));
-  const content: unknown[] = scaled.map((im) => ({
-    type: 'image',
-    source: { type: 'base64', media_type: im.mediaType, data: im.b64 },
-  }));
-  content.push({ type: 'text', text: buildPrompt(catalog, images.length) });
+// One call to the Messages API. `thinkTokens > 0` enables bounded extended
+// thinking; 0 disables thinking entirely. Returns both the parsed items and the
+// stop_reason so the caller can react to truncation.
+async function callVision(
+  content: unknown[],
+  thinkTokens: number,
+): Promise<{ items: RawDetection[]; stop: string | null }> {
+  // The JSON answer is tiny (a handful of items), so a few thousand output
+  // tokens is always enough. The trap with adaptive thinking was that reasoning
+  // had NO cap and could swallow the whole budget on a busy stand, truncating
+  // the JSON. Here thinking is bounded and max_tokens always leaves ~4000 tokens
+  // of headroom for the answer AFTER thinking, so the JSON can never be cut off.
+  const OUTPUT_HEADROOM = 4000;
+  const body: Record<string, unknown> = {
+    model: VISION_MODEL,
+    max_tokens: thinkTokens + OUTPUT_HEADROOM,
+    messages: [{ role: 'user', content }],
+  };
+  // Extended thinking helps identification + hidden-layer counting. Bounded so
+  // it can't starve the output. temperature must be default (omitted) when on.
+  if (thinkTokens > 0) body.thinking = { type: 'enabled', budget_tokens: thinkTokens };
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -177,17 +191,7 @@ async function analyzeReal(images: CapturedImage[], catalog: Catalog): Promise<R
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true',
     },
-    body: JSON.stringify({
-      model: VISION_MODEL,
-      // Generous budget: adaptive thinking counts against max_tokens, and on a
-      // busy stand the model needs room to reason AND still emit the full JSON.
-      // Too low and the answer is truncated (read as "no produce").
-      max_tokens: 8000,
-      // Adaptive thinking: the model reasons through identification and
-      // layer-counting before answering — measurably better than one-shot.
-      thinking: { type: 'adaptive' },
-      messages: [{ role: 'user', content }],
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -202,13 +206,28 @@ async function analyzeReal(images: CapturedImage[], catalog: Catalog): Promise<R
     .map((c: { text: string }) => c.text)
     .join('')
     .trim();
-  const items = parseItems(text);
-  // If the response was cut off before the JSON finished, don't mislabel it as
-  // "no produce" — tell the user the analysis was truncated so they can retry.
-  if (!items.length && data.stop_reason === 'max_tokens') {
-    throw new Error('הניתוח נקטע לפני שהסתיים. נסה שוב, או צלם פחות סוגים בפריים אחד.');
-  }
-  return items;
+  return { items: parseItems(text), stop: data.stop_reason ?? null };
+}
+
+async function analyzeReal(images: CapturedImage[], catalog: Catalog): Promise<RawDetection[]> {
+  const scaled = await Promise.all(images.map((im) => downscaleImage(im)));
+  const content: unknown[] = scaled.map((im) => ({
+    type: 'image',
+    source: { type: 'base64', media_type: im.mediaType, data: im.b64 },
+  }));
+  content.push({ type: 'text', text: buildPrompt(catalog, images.length) });
+
+  // Primary attempt: bounded thinking for best accuracy.
+  const first = await callVision(content, 3000);
+  if (first.items.length || first.stop !== 'max_tokens') return first.items;
+
+  // Truncated with no result (rare, very busy stand): retry once with thinking
+  // OFF so the entire budget goes to the JSON. Slightly less reasoning, but a
+  // real answer beats a truncation error.
+  const retry = await callVision(content, 0);
+  if (retry.items.length || retry.stop !== 'max_tokens') return retry.items;
+
+  throw new Error('הניתוח נקטע לפני שהסתיים. נסה שוב, או צלם פחות סוגים בפריים אחד.');
 }
 
 // ---- Demo mode (no key configured) ----
